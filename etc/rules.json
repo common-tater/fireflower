@@ -1,0 +1,8 @@
+{
+  "rules": {
+    "available_peers": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}
