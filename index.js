@@ -24,30 +24,32 @@ FireFlower.prototype.setBroadcaster = function (broadcasterId) {
   listenersCollectionRef.on('child_added', function (childSnapshot) {
     connectToPeer.call(self, broadcasterId, childSnapshot.val().id)
   })
+  // create the node in Firebase
   broadcasterRef.set({id: broadcasterId})
-  findPeerWithAvailableSlot.call(this, broadcasterId, function (peerSnapshot) {
-    var listenerId = peerSnapshot.val().id
-    broadcasterRef.child('listeners/' + listenerId).set({id: listenerId})
-  })
+
+  // todo: make this work if there are already listeners waiting
 }
 
 FireFlower.prototype.addListener = function (listenerId) {
   var self = this
+  // when finding a new upstream peer, pass [listenerId] as a peer to ignore,
+  // so we don't find ourself if we're already in the list for some reason
   findPeerWithAvailableSlot.call(this, [listenerId], function (availablePeerSnapshot) {
     var availablePeerId = availablePeerSnapshot.val().id
+    // set myself as one of the listeners in the available peer's list of listeners
     availablePeerSnapshot.ref().child('listeners/' + listenerId).set({id: listenerId}, function (err) {
       if (err) {
         return
       }
 
-      // if the peer found is now full (meaning it has k listeners),
+      // if the upstream peer found is now full (meaning it has k listeners),
       // then set it as unavailable so no more try to connect to it
       self.firebase.child('available_peers/' + availablePeerId + '/listeners').once('value', function (snapshot) {
         if (snapshot.numChildren() >= self.k)
           self.setPeerAsUnavailable.call(self, availablePeerId)
       })
 
-      // add this new listener as an available peer
+      // add this new listener as an available peer in the overall pool
       var newListenerRef = self.firebase.child('available_peers/' + listenerId)
       newListenerRef.set({id: listenerId})
       // watch out for any future downstream peers being added to this
@@ -67,8 +69,9 @@ FireFlower.prototype.removeListener = function (listenerId) {
   var self = this
 
   // watch out for the 'listeners' child being removed, because
-  // if it ever is, that signals that we're done dealing with
-  // downstream peers
+  // if it ever is, that means that we're done re-reouting
+  // downstream peers, and we can safely be removed from the
+  // pool of available peers
   this.firebase.child('available_peers/' + listenerId).on('child_removed', function (removedChildSnapshot) {
     if (removedChildSnapshot.key() === 'listeners') {
       self.setPeerAsUnavailable.call(self, listenerId)
@@ -80,6 +83,10 @@ FireFlower.prototype.removeListener = function (listenerId) {
   this.firebase.child('available_peers/' + listenerId + '/listeners').once('value', function (snapshot) {
     snapshot.forEach(function (childSnapshot) {
       var downstreamListenerId = childSnapshot.val().id
+      // when finding a new upstream peer, make sure it's not the same
+      // as the one being removed, or the current one we're finding
+      // a home for. That's why we pass [listenerid, downstreamListenerId]
+      // as the ones to ignore when finding an available peer
       findPeerWithAvailableSlot.call(self, [listenerId, downstreamListenerId], function (peerSnapshot) {
         peerSnapshot.ref().child('listeners/' + downstreamListenerId).set({id: downstreamListenerId})
         snapshot.ref().remove()
