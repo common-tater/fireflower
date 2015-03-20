@@ -1,5 +1,5 @@
 var Firebase = require('firebase')
-var simplepeer = require('simple-peer')
+var Signal = require('./signal')
 
 module.exports = FireFlower
 
@@ -16,7 +16,13 @@ function FireFlower (firebaseUrl, k, peerId) {
   this.k = k
   this.numSubscribers = 0
   this.myPeerId = peerId
-  this.peers = {}
+
+  this.onConnected = onConnected.bind(this)
+  this.onDisconnected = onDisconnected.bind(this)
+
+  this.signal = new Signal(this.firebase)
+  this.signal.on('onconnected', this.onConnected)
+  this.signal.on('ondisconnected', this.onDisconnected)
 }
 
 FireFlower.prototype.setBroadcaster = function () {
@@ -36,7 +42,7 @@ FireFlower.prototype.setBroadcaster = function () {
 FireFlower.prototype.subscribe = function () {
   var self = this
   findPeerWithAvailableSlot.call(this, function (availablePeerId) {
-    startListening.call(self, availablePeerId)
+    self.signal.connectToPeer(availablePeerId)
   })
 }
 
@@ -61,108 +67,32 @@ function findPeerWithAvailableSlot (cb) {
   })
 }
 
-function startListening (upstreamPeerId) {
-  var self = this
+function onConnected (stream, upstreamPeerId, downstreamPeerId) {
+  // if I am the upstream peer, and the connection was made,
+  // then increment my number of subscribers, and if I'm now
+  // full, remove me from the pool of available peers
+  if (this.myPeerId === upstreamPeerId) {
+    this.numSubscribers++
 
-  // if there is no listener data, or that listener is this user,
-  // then ignore it
-  if (!upstreamPeerId || upstreamPeerId === this.myPeerId) {
-    return
-  }
-
-  var signalRef = this.firebase.child('signals/' + this.myPeerId)
-
-  signalRef.set({
-    peer_id: this.myPeerId
-  }, function (err) {
-    if (err) {
-      return signalRef.once('value', startListening.bind(self))
+    if (this.numSubscribers >= this.k) {
+      this.setAsUnavailable()
     }
-
-    var peer = self.peers[upstreamPeerId]
-
-    if (peer && !peer.destroyed) {
-      // if we already know about this peer, try to renegotiate -
-      // the other side is responsible for tearing down the connection
-      // so we wait here and flag that a renegotiation is in needed
-      peer.needsRenegotiation = true
-      peer.once('close', function () {
-        connectToPeer.call(self, true, upstreamPeerId)
-      })
-      return
-    }
-
-    // push a new child on the upstream peer's list of signals,
-    // which should cause them to attempt to connect to us as well
-    var upstreamSignalRef = self.firebase.child('signals/' + upstreamPeerId)
-    upstreamSignalRef.push({id: self.myPeerId})
-
-    connectToPeer.call(self, true, upstreamPeerId)
-  })
-}
-
-function connectToPeer (initiator, destinationPeerId) {
-  var self = this
-  var timeout = null
-  var localSignals = this.firebase.child('signals').child(this.myPeerId)
-  var remoteSignals = this.firebase.child('signals').child(destinationPeerId)
-
-  var peer = simplepeer({
-    initiator: initiator
-  })
-
-  this.peers[destinationPeerId] = peer
-
-  peer.on('signal', function (signal) {
-    signal = JSON.parse(JSON.stringify(signal))
-    localSignals.push(signal, logerror)
-  })
-
-  peer.on('connect', function () {
-    clearTimeout(timeout)
-    peer.removeAllListeners('signal')
-    peer.removeAllListeners('connect')
-    remoteSignals.off()
-
-    if (initiator) {
-      if (self.output) {
-        self.output.pipe(peer)
-      }
-    } else if (!self.output) {
-      self.output = peer
-    }
-  })
-
-  peer.on('close', function () {
-    clearTimeout(timeout)
-    window.removeEventListener('beforeunload', onbeforeunload)
-    peer.removeAllListeners()
-    remoteSignals.off()
-    delete self.peers[destinationPeerId]
-
-    if (self.output) {
-      self.output.unpipe(peer)
-      if (self.output === peer) {
-        self.output = null
-      }
-    }
-  })
-
-  remoteSignals.on('child_added', function (signal) {
-    peer.signal(signal.val().id)
-  })
-
-  timeout = setTimeout(function () {
-    peer.destroy()
-  }, 10000)
-
-  window.addEventListener('beforeunload', onbeforeunload)
-
-  function onbeforeunload () {
-    peer.destroy()
   }
 }
 
-function logerror (err) {
-  if (err) return console.error(err)
+function onDisconnected (upstreamPeerId, downstreamPeerId) {
+  if (this.myPeerId === upstreamPeerId) {
+    // if I am the upstream peer, and the connection was lost,
+    // then decrement my number of subscribers, and if I'm not
+    // full anymore, add me to the pool of available peers
+    this.numSubscribers--
+
+    if (this.numSubscribers < this.k) {
+      this.setAsAvailable()
+    }
+  } else if (this.myPeerId === downstreamPeerId) {
+    // if I'm the downstreamm peer, and the connection was lost,
+    // try to connect to a new upstream peer
+    this.subscribe()
+  }
 }
