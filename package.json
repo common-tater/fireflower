@@ -21,6 +21,7 @@
   "author": "Danny Bauman <dannybauman@gmail.com>",
   "dependencies": {
     "firebase": "^2.2.3",
-    "hat": "0.0.3"
+    "hat": "0.0.3",
+    "simple-peer": "^4.0.4"
   }
 }
