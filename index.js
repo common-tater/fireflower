@@ -18,7 +18,18 @@ function FireFlower (firebaseUrl, k) {
 
 FireFlower.prototype.setBroadcaster = function (broadcasterId) {
   this.broadcasterId = broadcasterId
-  this.firebase.child('available_peers/' + broadcasterId).set({id: broadcasterId})
+  var broadcasterRef = this.firebase.child('available_peers/' + broadcasterId)
+  var listenersCollectionRef = broadcasterRef.child('listeners')
+  // watch out for any future downstream peers being added to the
+  // broadcaster's list of listeners
+  listenersCollectionRef.on('child_added', function (childSnapshot) {
+    connectToPeer.call(self, broadcasterId, childSnapshot.val().id)
+  })
+  broadcasterRef.set({id: broadcasterId})
+  findPeerWithAvailableSlot.call(this, broadcasterId, function (peerSnapshot) {
+    var listenerId = peerSnapshot.val().id
+    broadcasterRef.child('listeners/' + listenerId).set({id: listenerId})
+  })
 }
 
 FireFlower.prototype.addListener = function (listenerId) {
@@ -39,7 +50,13 @@ FireFlower.prototype.addListener = function (listenerId) {
       })
 
       // add this new listener as an available peer
-      self.firebase.child('available_peers/' + listenerId).set({id: listenerId})
+      var newListenerRef = self.firebase.child('available_peers/' + listenerId)
+      newListenerRef.set({id: listenerId})
+      // watch out for any future downstream peers being added to this
+      // node's list of listeners
+      newListenerRef.child('listeners').on('child_added', function (childSnapshot) {
+        connectToPeer.call(self, listenerId, childSnapshot.val().id)
+      })
     })
   })
 }
@@ -83,4 +100,12 @@ function findPeerWithAvailableSlot (ignoreThesePeerIds, cb) {
       }
     })
   })
+}
+
+function connectToPeer (upstreamPeerId, downstreamPeerId) {
+  console.log('connecting upstream peer ' + upstreamPeerId + ' to downstream peer ' + downstreamPeerId)
+  // todo: implement data channel connection
+  // todo: when data connection is lost, make sure to remove
+  //       this downstream peer ID from this upstream peer's
+  //       list of listeners
 }
