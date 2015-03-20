@@ -13,7 +13,6 @@ function FireFlower (firebaseUrl, k) {
   this.firebase = new Firebase(firebaseUrl)
 
   this.k = k
-  this.listeners = {}
 }
 
 FireFlower.prototype.setBroadcaster = function (broadcasterId) {
@@ -34,7 +33,6 @@ FireFlower.prototype.setBroadcaster = function (broadcasterId) {
 
 FireFlower.prototype.addListener = function (listenerId) {
   var self = this
-  this.listeners[listenerId] = listenerId
   findPeerWithAvailableSlot.call(this, [listenerId], function (availablePeerSnapshot) {
     var availablePeerId = availablePeerSnapshot.val().id
     availablePeerSnapshot.ref().child('listeners/' + listenerId).set({id: listenerId}, function (err) {
