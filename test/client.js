@@ -1,5 +1,6 @@
 var test = require('tape')
 var Firebase = require('firebase')
+var FireFlower = require('../')
 
 process.env = require('./env.json')
 
@@ -24,4 +25,16 @@ test('unauth', function (t) {
     db.offAuth(onauth)
     t.pass()
   }
+})
+
+test('set first broadcaster', function (t) {
+  t.plan(1)
+
+  var fireflower = new FireFlower(process.env.FIREBASE_URL, 3)
+
+  var broadcasterId = 0
+  fireflower.setBroadcaster(broadcasterId)
+  db.child('available_peers/' + broadcasterId).once('value', function (snapshot) {
+    t.equal(snapshot.val().id, broadcasterId)
+  })
 })
