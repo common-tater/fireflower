@@ -78,9 +78,17 @@ FireFlower.prototype.removeListener = function (listenerId) {
     }
   })
 
-  // if there are any downstream listeners conencted to this listener,
-  // find a new upstream peer for each of them
+  // look for any listeners to be re-routed
   this.firebase.child('available_peers/' + listenerId + '/listeners').once('value', function (snapshot) {
+    // if there aren't any downstream listeners connected, just
+    // remove the node and return
+    if (snapshot.numChildren() === 0) {
+      snapshot.ref().parent().remove()
+      return
+    }
+
+    // if there are any downstream listeners conencted to this listener,
+    // find a new upstream peer for each of them
     snapshot.forEach(function (childSnapshot) {
       var downstreamListenerId = childSnapshot.val().id
       // when finding a new upstream peer, make sure it's not the same
