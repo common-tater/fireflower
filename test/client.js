@@ -36,5 +36,7 @@ test('set first broadcaster', function (t) {
   fireflower.setBroadcaster(broadcasterId)
   db.child('available_peers/' + broadcasterId).once('value', function (snapshot) {
     t.equal(snapshot.val().id, broadcasterId)
+    // remove this broadcaster to reset
+    db.child('available_peers' + broadcasterId).remove()
   })
 })
