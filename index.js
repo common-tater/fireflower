@@ -1,5 +1,5 @@
 var Firebase = require('firebase')
-var Signal = require('./signal')
+var Signal = require('./connection')
 
 module.exports = FireFlower
 
