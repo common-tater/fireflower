@@ -21,7 +21,7 @@ function FireFlower (firebaseUrl, k, peerId) {
   this.onConnectionClosed = onConnectionClosed.bind(this)
   this.onConnectionFailed = onConnectionFailed.bind(this)
 
-  this.connection = new Connection(this.firebase)
+  this.connection = new Connection(this.firebase, this.myPeerId)
   this.connection.on('onconnected', this.onConnected)
   this.connection.on('onconnectionclosed', this.onConnectionClosed)
   this.connection.on('onconnectionfailed', this.onConnectionFailed)
@@ -44,7 +44,8 @@ FireFlower.prototype.setBroadcaster = function () {
 FireFlower.prototype.subscribe = function () {
   var self = this
   findPeerWithAvailableSlot.call(this, function (availablePeerId) {
-    self.connection.connectToPeer(availablePeerId)
+    var signalRef = self.firebase.child('available_peers/' + availablePeerId)
+    self.connection.connectToPeer(true, availablePeerId)
   })
 }
 
