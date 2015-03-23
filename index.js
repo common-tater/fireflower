@@ -80,7 +80,7 @@ function onConnected (stream, upstreamPeerId, downstreamPeerId) {
   }
 }
 
-function onDisconnected (upstreamPeerId, downstreamPeerId) {
+function onConnectionClosed (upstreamPeerId, downstreamPeerId) {
   if (this.myPeerId === upstreamPeerId) {
     // if I am the upstream peer, and the connection was lost,
     // then decrement my number of subscribers, and if I'm not
@@ -91,8 +91,12 @@ function onDisconnected (upstreamPeerId, downstreamPeerId) {
       this.setAsAvailable()
     }
   } else if (this.myPeerId === downstreamPeerId) {
-    // if I'm the downstreamm peer, and the connection was lost,
+    // if I'm the downstream peer, and the connection was lost,
     // try to connect to a new upstream peer
     this.subscribe()
   }
+}
+
+function onConenctionFailed (upstreamPeerId, downstreamPeerId) {
+  // retry
 }

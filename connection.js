@@ -15,6 +15,8 @@ inherits(Connection, events.EventEmitter)
 Connection.prototype.connectToPeer = function (upstreamPeerId) {
   // once a peer connection is succesfully made, do this:
   //this.emit('onconnected', stream, upstreamPeerId, this.peerId)
-  // once a peer connection is disconnected or lost, do this:
-  //this.emit('ondisconnected', upstreamPeerId, this.peerId)
+  // once a peer connection is disconnected, do this:
+  //this.emit('onconnectionclosed', upstreamPeerId, this.peerId)
+  // if a peer connection fails, do this:
+  //this.emit('onconnectionfailed', upstreamPeerId, this.peerId)
 }
