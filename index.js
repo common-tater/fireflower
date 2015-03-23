@@ -1,5 +1,5 @@
 var Firebase = require('firebase')
-var Signal = require('./connection')
+var Connection = require('./connection')
 
 module.exports = FireFlower
 
@@ -18,11 +18,13 @@ function FireFlower (firebaseUrl, k, peerId) {
   this.myPeerId = peerId
 
   this.onConnected = onConnected.bind(this)
-  this.onDisconnected = onDisconnected.bind(this)
+  this.onConnectionClosed = onConnectionClosed.bind(this)
+  this.onConnectionFailed = onConnectionFailed.bind(this)
 
-  this.signal = new Signal(this.firebase)
-  this.signal.on('onconnected', this.onConnected)
-  this.signal.on('ondisconnected', this.onDisconnected)
+  this.connection = new Connection(this.firebase)
+  this.connection.on('onconnected', this.onConnected)
+  this.connection.on('onconnectionclosed', this.onConnectionClosed)
+  this.connection.on('onconnectionfailed', this.onConnectionFailed)
 }
 
 FireFlower.prototype.setBroadcaster = function () {
@@ -42,7 +44,7 @@ FireFlower.prototype.setBroadcaster = function () {
 FireFlower.prototype.subscribe = function () {
   var self = this
   findPeerWithAvailableSlot.call(this, function (availablePeerId) {
-    self.signal.connectToPeer(availablePeerId)
+    self.connection.connectToPeer(availablePeerId)
   })
 }
 
@@ -97,6 +99,6 @@ function onConnectionClosed (upstreamPeerId, downstreamPeerId) {
   }
 }
 
-function onConenctionFailed (upstreamPeerId, downstreamPeerId) {
+function onConnectionFailed (upstreamPeerId, downstreamPeerId) {
   // retry
 }
