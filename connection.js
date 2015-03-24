@@ -91,6 +91,12 @@ Connection.prototype.connectToPeer = function (initiator, destinationPeerId) {
     }
   })
 
+  // whenever a signal is added to my list by someone who wants,
+  // to connect, signal them back
+  this.myPeerSignalsRef.on('child_added', function (signal) {
+    simplePeer.signal(signal.val())
+  })
+
   // set a timer, and if by that time we haven't
   // connected, then destroy this peer attempt
   timeout = setTimeout(function () {
