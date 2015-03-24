@@ -33,17 +33,13 @@ Connection.prototype.connectToPeer = function (initiator, destinationPeerId) {
   // to connect to. we're going to push a new child to their list, which
   // will trigger them to notice it and connect to us
   this.destinationSignalsRef = this.firebase.child('peer_signals/' + destinationPeerId)
-  // newSignalRef will point to the new firebase node created on the destination
-  // peer's list of signals. Keep it around so we can remove it once the
-  // connection has finished (either succeeded or failed)
-  var newSignalRef = null
   var timeout = null
 
   simplePeer.on('signal', function (signal) {
     signal = JSON.parse(JSON.stringify(signal))
     signal.peerId = self.peerId
     // create a new signal on the destination peer's list
-    newSignalRef = self.destinationSignalsRef.push(signal)
+    self.destinationSignalsRef.push(signal)
   })
 
   simplePeer.on('connect', function () {
@@ -69,9 +65,17 @@ Connection.prototype.connectToPeer = function (initiator, destinationPeerId) {
   simplePeer.on('close', function () {
     clearTimeout(timeout)
     simplePeer.removeAllListeners()
-    // remove the firebase node that was the destination peer's
-    // reference to this peer
-    newSignalRef.remove()
+    // remove any signals to the destination peer that are
+    // left around, since the connection has been closed
+    self.destinationSignalsRef
+      .orderByChild('peerId')
+      .startAt(self.peerId)
+      .endAt(self.peerId)
+      .once('value', function (snapshot) {
+        snapshot.forEach(function (childSnapshot) {
+          childSnapshot.ref().remove()
+        })
+      })
 
     if (self.output) {
       self.output.unpipe(simplePeer)
