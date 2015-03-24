@@ -23,7 +23,7 @@ test('when k=1 and peer is full, subscriber is removed from list of available pe
   broadcasterFireFlower = new FireFlower(process.env.FIREBASE_URL, 1, testBroadcasterId)
   broadcasterFireFlower.setBroadcaster(testBroadcasterId)
   subscriberFireFlower = new FireFlower(process.env.FIREBASE_URL, 1, testSubscriberId)
-  subscriberFireFlower.subscribe(testBroadcasterId)
+  subscriberFireFlower.subscribe()
 
   setTimeout(function () {
     db.child('available_peers/' + testBroadcasterId).once('value', function (snapshot) {
@@ -32,11 +32,42 @@ test('when k=1 and peer is full, subscriber is removed from list of available pe
   }, numSecsToWait * 1000)
 })
 
+test('when k=3 and peer is full, subscriber is removed from list of available peers', function (t) {
+  t.plan(1)
+  // cleanup the previous data so we can start fresh since we're changing k
+  cleanup()
+
+  broadcasterFireFlower = new FireFlower(process.env.FIREBASE_URL, 3, testBroadcasterId)
+  broadcasterFireFlower.setBroadcaster(testBroadcasterId)
+
+  // create 3 test subscribers, and subscribe them all
+  // directly to the broadcaster
+  var subscriberFireFlowers = []
+  var testSubscriberIds = ['test_1', 'test_2', 'test_3']
+  for (var i = 0; i < testSubscriberIds.length; i++) {
+    var testFireFlower = new FireFlower(process.env.FIREBASE_URL, 3, testSubscriberIds[i])
+    testFireFlower.subscribe(testBroadcasterId)
+    subscriberFireFlowers.push(testFireFlower)
+  }
+
+  // wait for that to settle, and then test to see that the broadcaster
+  // has become full and pulled out of the available peers list
+  setTimeout(function () {
+    db.child('available_peers/' + testBroadcasterId).once('value', function (snapshot) {
+      t.equal(snapshot.val(), null)
+    })
+  }, numSecsToWait * 1000)
+})
+
 test('cleanup', function (t) {
+  cleanup()
+
+  t.end()
+})
+
+function cleanup () {
   db.child('available_peers/' + testBroadcasterId).remove()
   db.child('available_peers/' + testSubscriberId).remove()
   db.child('peer_signals/' + testBroadcasterId).remove()
   db.child('peer_signals/' + testSubscriberId).remove()
-
-  t.end()
-})
+}

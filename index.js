@@ -41,12 +41,11 @@ FireFlower.prototype.setBroadcaster = function () {
   // everyone
 }
 
-FireFlower.prototype.subscribe = function () {
+FireFlower.prototype.subscribe = function (preferredPeerId) {
   var self = this
   findPeerWithAvailableSlot.call(this, function (availablePeerId) {
-    var signalRef = self.firebase.child('available_peers/' + availablePeerId)
     self.connection.connectToPeer(true, availablePeerId)
-  })
+  }, preferredPeerId)
 }
 
 FireFlower.prototype.setAsAvailable = function () {
@@ -57,9 +56,22 @@ FireFlower.prototype.setAsUnavailable = function () {
   this.firebase.child('available_peers/' + this.myPeerId).remove()
 }
 
-function findPeerWithAvailableSlot (cb) {
+function findPeerWithAvailableSlot (cb, preferredPeerId) {
   var self = this
-  this.firebase.child('available_peers/').once('value', function (snapshot) {
+
+  // if the caller has a preferredPeerId in mind,
+  // try to see if they're available first
+  if (preferredPeerId !== null) {
+    this.firebase.child('available_peers/' + preferredPeerId).once('value', function (snapshot) {
+      if (snapshot.val() !== null) {
+        return cb(preferredPeerId)
+      }
+    })
+  }
+
+  // if there is no preferred peer, or if it is unavailable, pick the
+  // first peer out from the list (whichever one firebase gives us first)
+  this.firebase.child('available_peers').once('value', function (snapshot) {
     snapshot.forEach(function (childSnapshot) {
       // only consider this peer if it isn't ourself
       if (childSnapshot.val().id !== self.myPeerId) {

@@ -32,7 +32,7 @@ test('subscribe and check for extra peers', function (t) {
   t.plan(1)
 
   subscriberFireFlower = new FireFlower(process.env.FIREBASE_URL, 3, testSubscriberId)
-  subscriberFireFlower.subscribe(testBroadcasterId)
+  subscriberFireFlower.subscribe()
   setTimeout(function () {
     db.child('available_peers').once('value', function (snapshot) {
       t.equal(snapshot.numChildren(), 2)
