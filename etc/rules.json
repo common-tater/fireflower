@@ -3,6 +3,10 @@
     "available_peers": {
       ".read": true,
       ".write": true
+    },
+    "peer_signals": {
+      ".read": true,
+      ".write": true
     }
   }
 }
