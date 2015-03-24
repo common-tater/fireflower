@@ -7,6 +7,10 @@ process.env = require('./env.json')
 
 var db = new Firebase(process.env.FIREBASE_URL)
 
+// how long to wait, in seconds, to give Firebase
+// its chance to set our data before we check it
+var numSecsToWait = 1
+
 test('auth with secret', function (t) {
   t.plan(2)
 
@@ -35,11 +39,14 @@ test('set broadcaster', function (t) {
 
   var fireflower = new FireFlower(process.env.FIREBASE_URL, 3, testBroadcasterId)
   fireflower.setBroadcaster(testBroadcasterId)
-  db.child('available_peers/' + testBroadcasterId).once('value', function (snapshot) {
-    t.equal(snapshot.val().id, testBroadcasterId)
-    // remove this broadcaster to reset
-    db.child('available_peers/' + testBroadcasterId).remove()
-  })
+
+  setTimeout(function () {
+    db.child('available_peers/' + testBroadcasterId).once('value', function (snapshot) {
+      t.equal(snapshot.val().id, testBroadcasterId)
+      // remove this broadcaster to reset
+      db.child('available_peers/' + testBroadcasterId).remove()
+    })
+  }, numSecsToWait * 1000)
 })
 
 test('set broadcaster and subscribe with first listener', function (t) {
@@ -54,9 +61,6 @@ test('set broadcaster and subscribe with first listener', function (t) {
 
   var asyncTasks = []
 
-  // wait a few seconds to allow for the broadcaster
-  // to be set
-  var numSecsToWait = 1
   setTimeout(function () {
     listenerFireFlower.subscribe(broadcasterId)
 
