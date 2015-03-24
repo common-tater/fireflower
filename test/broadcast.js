@@ -28,7 +28,7 @@ test('set broadcaster', function (t) {
 })
 
 // check that there are only two, and no other available peers
-test('subscribe and check for extra peers', function (t) {
+test('subscribe and check for correct number of available peers', function (t) {
   t.plan(1)
 
   subscriberFireFlower = new FireFlower(process.env.FIREBASE_URL, 3, testSubscriberId)

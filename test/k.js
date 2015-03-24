@@ -32,7 +32,7 @@ test('when k=1 and peer is full, subscriber is removed from list of available pe
   }, numSecsToWait * 1000)
 })
 
-test('when k=3 and peer is full, subscriber is removed from list of available peers', function (t) {
+test('broadcaster keeps correct count of 3 subscribers when k=3', function (t) {
   t.plan(1)
   // cleanup the previous data so we can start fresh since we're changing k
   cleanup()
@@ -42,16 +42,22 @@ test('when k=3 and peer is full, subscriber is removed from list of available pe
 
   // create 3 test subscribers, and subscribe them all
   // directly to the broadcaster
-  var subscriberFireFlowers = []
   var testSubscriberIds = ['test_1', 'test_2', 'test_3']
   for (var i = 0; i < testSubscriberIds.length; i++) {
     var testFireFlower = new FireFlower(process.env.FIREBASE_URL, 3, testSubscriberIds[i])
+    // specifically subscribe to the broadcaster, not
+    // just the first one FireFlower picks for us
     testFireFlower.subscribe(testBroadcasterId)
-    subscriberFireFlowers.push(testFireFlower)
   }
+  t.equal(broadcasterFireFlower.numSubscribers, 3)
+})
 
-  // wait for that to settle, and then test to see that the broadcaster
-  // has become full and pulled out of the available peers list
+test('when k=3 and peer is full, subscriber has been removed from list of available peers', function (t) {
+  t.plan(1)
+
+  // wait for the previous subscriber connection to settle, and then
+  // test to see that the broadcaster has become full and pulled out
+  // of the available peers list
   setTimeout(function () {
     db.child('available_peers/' + testBroadcasterId).once('value', function (snapshot) {
       t.equal(snapshot.val(), null)
