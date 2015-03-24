@@ -49,7 +49,7 @@ function runtests () {
 
 function startZuul () {
   var self = this
-  var opts = args.concat([ '--local', '8000', '--ui', 'tape', '--no-coverage', '--', 'test/client.js'])
+  var opts = args.concat([ '--local', '8000', '--ui', 'tape', '--no-coverage', '--', 'test/tests.js'])
 
   zuul = spawn('zuul', opts, { stdio: 'inherit' })
   zuul.on('exit', function (status) {
