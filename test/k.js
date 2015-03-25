@@ -13,17 +13,16 @@ var db = new Firebase(process.env.FIREBASE_URL)
 // a solid connection
 var numSecsToWait = 10
 var testBroadcasterId = 'test_broadcaster'
-var testSubscriberId = 'test_subscriber'
-var broadcasterFireFlower = null
-var subscriberFireFlower = null
+var testSubscriberIds = ['test_subscriber_1', 'test_subscriber_2', 'test_subscriber_3']
+var fireFlowers = {}
 
 test('when k=1 and peer is full, subscriber is removed from list of available peers', function (t) {
   t.plan(1)
 
-  broadcasterFireFlower = new FireFlower(process.env.FIREBASE_URL, 1, testBroadcasterId)
-  broadcasterFireFlower.setBroadcaster(testBroadcasterId)
-  subscriberFireFlower = new FireFlower(process.env.FIREBASE_URL, 1, testSubscriberId)
-  subscriberFireFlower.subscribe()
+  fireFlowers[testBroadcasterId] = new FireFlower(process.env.FIREBASE_URL, 1, testBroadcasterId)
+  fireFlowers[testBroadcasterId].setBroadcaster(testBroadcasterId)
+  fireFlowers[testSubscriberIds[0]] = new FireFlower(process.env.FIREBASE_URL, 1, testSubscriberIds[0])
+  fireFlowers[testSubscriberIds[0]].subscribe()
 
   setTimeout(function () {
     db.child('available_peers/' + testBroadcasterId).once('value', function (snapshot) {
@@ -37,19 +36,20 @@ test('broadcaster keeps correct count of 3 subscribers when k=3', function (t) {
   // cleanup the previous data so we can start fresh since we're changing k
   cleanup()
 
-  broadcasterFireFlower = new FireFlower(process.env.FIREBASE_URL, 3, testBroadcasterId)
-  broadcasterFireFlower.setBroadcaster(testBroadcasterId)
+  fireFlowers[testBroadcasterId] = new FireFlower(process.env.FIREBASE_URL, 3, testBroadcasterId)
+  fireFlowers[testBroadcasterId].setBroadcaster(testBroadcasterId)
 
   // create 3 test subscribers, and subscribe them all
   // directly to the broadcaster
-  var testSubscriberIds = ['test_1', 'test_2', 'test_3']
+
   for (var i = 0; i < testSubscriberIds.length; i++) {
-    var testFireFlower = new FireFlower(process.env.FIREBASE_URL, 3, testSubscriberIds[i])
+    fireFlowers[testSubscriberIds[i]] = new FireFlower(process.env.FIREBASE_URL, 3, testSubscriberIds[i])
     // specifically subscribe to the broadcaster, not
     // just the first one FireFlower picks for us
-    testFireFlower.subscribe(testBroadcasterId)
+    fireFlowers[testSubscriberIds[i]].subscribe(testBroadcasterId)
+
   }
-  t.equal(broadcasterFireFlower.numSubscribers, 3)
+  t.equal(fireFlowers[testBroadcasterId].numSubscribers, 3)
 })
 
 test('when k=3 and peer is full, subscriber has been removed from list of available peers', function (t) {
@@ -72,8 +72,8 @@ test('cleanup', function (t) {
 })
 
 function cleanup () {
-  db.child('available_peers/' + testBroadcasterId).remove()
-  db.child('available_peers/' + testSubscriberId).remove()
-  db.child('peer_signals/' + testBroadcasterId).remove()
-  db.child('peer_signals/' + testSubscriberId).remove()
+  for (var peerId in fireFlowers) {
+    db.child('available_peers/' + peerId).remove()
+    db.child('peer_signals/' + peerId).remove()
+  }
 }
