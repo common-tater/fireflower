@@ -17,35 +17,36 @@ function Connection (firebase, peerId) {
   // a new peer is trying to connect, so connect to them
   this.myPeerSignalsRef = firebase.child('peer_signals/' + peerId)
   this.myPeerSignalsRef.on('child_added', function (signal) {
-    self.connectToPeer(false, signal.val().peerId)
+    var newSignalObject = signal.val()[Object.keys(signal.val())[0]]
+    self.connectToPeer(false, newSignalObject.peerId)
   })
 }
 inherits(Connection, events.EventEmitter)
 
 Connection.prototype.connectToPeer = function (initiator, destinationPeerId) {
   var self = this
+  var localSignals = this.myPeerSignalsRef.child(this.peerId)
+  var remoteSignals = this.myPeerSignalsRef.child(destinationPeerId)
 
   var simplePeer = simplepeer({
     initiator: initiator
   })
 
-  // destinationSignalRef is the ref in firebase for the user we're trying
-  // to connect to. we're going to push a new child to their list, which
-  // will trigger them to notice it and connect to us
-  this.destinationSignalsRef = this.firebase.child('peer_signals/' + destinationPeerId)
   var timeout = null
 
   simplePeer.on('signal', function (signal) {
     signal = JSON.parse(JSON.stringify(signal))
     signal.peerId = self.peerId
     // create a new signal on the destination peer's list
-    self.destinationSignalsRef.push(signal)
+    localSignals.push(signal)
   })
 
   simplePeer.on('connect', function () {
     clearTimeout(timeout)
     simplePeer.removeAllListeners('signal')
     simplePeer.removeAllListeners('connect')
+    remoteSignals.off()
+    self.myPeerSignalsRef.remove()
 
     if (initiator) {
       if (self.output) {
@@ -65,17 +66,8 @@ Connection.prototype.connectToPeer = function (initiator, destinationPeerId) {
   simplePeer.on('close', function () {
     clearTimeout(timeout)
     simplePeer.removeAllListeners()
-    // remove any signals to the destination peer that are
-    // left around, since the connection has been closed
-    self.destinationSignalsRef
-      .orderByChild('peerId')
-      .startAt(self.peerId)
-      .endAt(self.peerId)
-      .once('value', function (snapshot) {
-        snapshot.forEach(function (childSnapshot) {
-          childSnapshot.ref().remove()
-        })
-      })
+    remoteSignals.off()
+    self.myPeerSignalsRef.remove()
 
     if (self.output) {
       self.output.unpipe(simplePeer)
@@ -93,7 +85,7 @@ Connection.prototype.connectToPeer = function (initiator, destinationPeerId) {
 
   // whenever a signal is added to my list by someone who wants,
   // to connect, signal them back
-  this.myPeerSignalsRef.on('child_added', function (signal) {
+  remoteSignals.on('child_added', function (signal) {
     simplePeer.signal(signal.val())
   })
 
