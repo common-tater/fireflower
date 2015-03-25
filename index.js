@@ -61,10 +61,10 @@ function findPeerWithAvailableSlot (cb, preferredPeerId) {
 
   // if the caller has a preferredPeerId in mind,
   // try to see if they're available first
-  if (preferredPeerId !== null) {
-    this.firebase.child('available_peers/' + preferredPeerId).once('value', function (snapshot) {
+  if (preferredPeerId) {
+    return this.firebase.child('available_peers/' + preferredPeerId).once('value', function (snapshot) {
       if (snapshot.val() !== null) {
-        return cb(preferredPeerId)
+        cb(preferredPeerId)
       }
     })
   }
