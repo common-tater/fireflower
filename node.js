@@ -73,19 +73,43 @@ Node.prototype._doconnect = function () {
 
   // since we are not root we need to publish a connection request
   this._requestRef = this._requestsRef.child(this.id)
-  self._responsesRef = this._requestRef.child('responses')
-  self._responsesRef.once('child_added', this._onresponse)
-
   this._requestRef.update({
     id: this.id, 
     removal_flag: {
       removed: false 
     }
+  }, function (err) {
+    if (err) {
+
+      // keep trying to publish it
+      setTimeout(function () {
+        if (self.state === 'requesting') {
+          self._doconnect()
+        }
+      }, RETRY_DELAY)
+
+      return
+    }
+
+    // it's possible to get connected before this callback fires
+    if (self.state !== 'requesting') {
+      return
+    }
+
+    // in the rare case someone removes our request
+    // before we actually get connected, reconnect
+    self._requestRef.child('removal_flag').once('child_removed', function () {
+      if (self.state !== 'connected' && 
+          self.state !== 'disconnected') {
+        self._doconnect()
+      }
+    })
+
+    // now that our request has been published
+    // wait for someone to respond
+    self._responsesRef = self._requestRef.child('responses')
+    self._responsesRef.on('child_added', self._onresponse)
   })
-
-  setTimeout(function () {
-
-  }, CONNECTION_TIMEOUT)
 }
 
 Node.prototype._onresponse = function (snapshot) {
@@ -130,13 +154,13 @@ Node.prototype._onrequest = function (snapshot) {
     return
   }
 
-  debug(this.id + ' responding to request by ' + peerId)
+  debug(this.id + ' saw connection request from ' + peerId)
 
   var responseRef = requestRef.child('responses/' + this.id)
   responseRef.update({ id: this.id }, function (err) {
     if (err) {
       // if this fails, assume it's because the request was removed
-      debugError(self.id + ' failed to respond for ' + request.id)
+      debug(self.id + ' failed to set response to request by ' + request.id)
       return
     }
 
@@ -166,7 +190,7 @@ Node.prototype._connectToPeer = function (peerId, initiator, responseRef) {
   peer.on('close', this._onpeerClose.bind(this, peer, remoteSignals))
   
   peer.on('error', function (err) {
-    debugError(this.id + ' saw peer connection error', err)
+    debug(this.id + ' saw peer connection error', err)
   })
 
   peer.on('signal', function (signal) {
