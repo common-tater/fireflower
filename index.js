@@ -1,117 +1,60 @@
+module.exports = Fireflower
+
+var debug = require('debug')('fireflower')
+var events = require('events')
+var inherits = require('inherits')
 var Firebase = require('firebase')
-var Connection = require('./connection')
+var Node = require('./node')
 
-module.exports = FireFlower
+inherits(Fireflower, events.EventEmitter)
 
-function FireFlower (firebaseUrl, k, peerId) {
-  if (!(this instanceof FireFlower)) {
-    return new FireFlower(k)
-  }
-  if (!k) {
-    console.error('must include k as args')
+function Fireflower (url) {
+  if (!(this instanceof Fireflower)) {
+    return new Fireflower(url)
   }
 
-  this.firebase = new Firebase(firebaseUrl)
+  this.url = url
+  this.nodes = {}
+  this._onconfigure = this._onconfigure.bind(this)
 
-  this.k = k
-  this.numSubscribers = 0
-  this.myPeerId = peerId
+  this.ref = new Firebase(url)
+  this.configRef = this.ref.child('configuration')
+  this.configRef.on('value', this._onconfigure)
 
-  this.onConnected = onConnected.bind(this)
-  this.onConnectionClosed = onConnectionClosed.bind(this)
-  this.onConnectionFailed = onConnectionFailed.bind(this)
-
-  this.connection = new Connection(this.firebase, this.myPeerId)
-  this.connection.on('onconnected', this.onConnected)
-  this.connection.on('onconnectionclosed', this.onConnectionClosed)
-  this.connection.on('onconnectionfailed', this.onConnectionFailed)
+  events.EventEmitter.call(this)
 }
 
-FireFlower.prototype.setBroadcaster = function () {
-  var broadcasterRef = this.firebase.child('available_peers/' + this.myPeerId)
-  // create an entry for this broadcaster in Firebase's list of available peers
-  broadcasterRef.set({id: this.myPeerId}, function (err) {
-    if (err) {
-      throw err
-    }
-  })
+Fireflower.prototype._onconfigure = function (snapshot) {
+  var data = snapshot.val()
 
-  // todo: if there are any existing peers connected and
-  // waiting, we should start the process of connecting
-  // everyone
-}
-
-FireFlower.prototype.subscribe = function (preferredPeerId) {
-  var self = this
-  findPeerWithAvailableSlot.call(this, function (availablePeerId) {
-    self.connection.connectToPeer(true, availablePeerId)
-  }, preferredPeerId)
-}
-
-FireFlower.prototype.setAsAvailable = function () {
-  this.firebase.child('available_peers/' + this.myPeerId).set({id: this.myPeerId})
-}
-
-FireFlower.prototype.setAsUnavailable = function () {
-  this.firebase.child('available_peers/' + this.myPeerId).remove()
-}
-
-function findPeerWithAvailableSlot (cb, preferredPeerId) {
-  var self = this
-
-  // if the caller has a preferredPeerId in mind,
-  // try to see if they're available first
-  if (preferredPeerId) {
-    return this.firebase.child('available_peers/' + preferredPeerId).once('value', function (snapshot) {
-      if (snapshot.val() !== null) {
-        cb(preferredPeerId)
-      }
-    })
+  if (!data.K) {
+    throw new Error('configuration did not supply valid value for K')
   }
 
-  // if there is no preferred peer, or if it is unavailable, pick the
-  // first peer out from the list (whichever one firebase gives us first)
-  this.firebase.child('available_peers').once('value', function (snapshot) {
-    snapshot.forEach(function (childSnapshot) {
-      // only consider this peer if it isn't ourself
-      if (childSnapshot.val().id !== self.myPeerId) {
-        cb(childSnapshot.val().id)
-        return true
-      }
-    })
-  })
-}
-
-function onConnected (stream, upstreamPeerId, downstreamPeerId) {
-  // if I am the upstream peer, and the connection was made,
-  // then increment my number of subscribers, and if I'm now
-  // full, remove me from the pool of available peers
-  if (this.myPeerId === upstreamPeerId) {
-    this.numSubscribers++
-
-    if (this.numSubscribers >= this.k) {
-      this.setAsUnavailable()
-    }
+  if (!data.root) {
+    throw new Error('configuration did not supply a valid root')
   }
+
+  this.K = data.K
+  this.root = data.root
+
+  debug(this.url + ' did update configuration')
+  this.emit('configure')
 }
 
-function onConnectionClosed (upstreamPeerId, downstreamPeerId) {
-  if (this.myPeerId === upstreamPeerId) {
-    // if I am the upstream peer, and the connection was lost,
-    // then decrement my number of subscribers, and if I'm not
-    // full anymore, add me to the pool of available peers
-    this.numSubscribers--
+Fireflower.prototype.connect = function (id) {
+  var node = new Node(this, id)
+  this.nodes[node.id] = node
+  node.connect()
+  return node
+}
 
-    if (this.numSubscribers < this.k) {
-      this.setAsAvailable()
-    }
-  } else if (this.myPeerId === downstreamPeerId) {
-    // if I'm the downstream peer, and the connection was lost,
-    // try to connect to a new upstream peer
-    this.subscribe()
+Fireflower.prototype.disconnect = function () {
+  this.configRef.off()
+
+  for (var i in this.nodes) {
+    this.nodes[i].disconnect()
   }
-}
 
-function onConnectionFailed (upstreamPeerId, downstreamPeerId) {
-  // retry
+  this.nodes = {}
 }
