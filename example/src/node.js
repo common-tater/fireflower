@@ -3,12 +3,12 @@ module.exports = NodeView
 var hyperglue = require('hyperglue2')
 var isRetina = window.devicePixelRatio > 1
 
-function NodeView (graph, node) {
+function NodeView (graph, model) {
   this.graph = graph
-  this.node = node
-  this.node.on('statechange', this.render.bind(this))
+  this.model = model
+  this.model.on('statechange', this.render.bind(this))
 
-  this.id = this.node.id
+  this.id = this.model.id
   this.x = 0
   this.y = 0
   this.width = 30
@@ -21,14 +21,14 @@ function NodeView (graph, node) {
 NodeView.prototype.render = function () {
   var self = this
   var ctx = this.graph.context
-  var upstream = this.graph.nodes[this.node.root && this.node.root.id]
+  var upstream = this.graph.nodes[this.model.root && this.model.root.id]
   var scale = isRetina ? 2 : 1
 
   hyperglue(this.el, {
     _attr: {
       'data-id': this.id
     },
-    '#label': this.id
+    '#label': this.id.slice(-5) + ' (' + this.model.branch + ')'
   })
 
   this.x = Math.min(this.x, this.graph.width)
@@ -54,7 +54,7 @@ NodeView.prototype.destroy = function () {
     this.el.parentNode.removeChild(this.el)
   }
 
-  this.node.disconnect()
+  this.model.disconnect()
   this.graph.remove(this)
   this.graph.render()
 }
