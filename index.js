@@ -196,8 +196,10 @@ Node.prototype._onrequest = function (snapshot) {
     return
   }
 
-  // TODO! prevent circles / allow proper healing
-  // using this.branch and request.branch
+  // prevent circles
+  if (request.branch === this.branch) {
+    return
+  }
 
   debug(this.id + ' saw request by ' + peerId)
 
@@ -336,9 +338,7 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   this.root = peer
 
   // update branch
-  if (this.branch === this.id) {
-    this.branch = peer.branch + this.branch
-  }
+  this.branch = peer.branch || this.id
 
   // change state -> connected
   debug(this.id + ' was connected by ' + peer.id)
@@ -407,6 +407,11 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
 
   // emit disconnect
   this.emit('disconnect', peer)
+
+  // FIXME kill all downstream connections to ensure circles don't occur
+  for (var i in this.peers) {
+    this.peers[i].destroy()
+  }
 
   // attempt to reconnect if we were not disconnected intentionally
   if (previousState !== 'disconnected') {
