@@ -204,7 +204,13 @@ Node.prototype._onrequest = function (snapshot) {
   debug(this.id + ' saw request by ' + peerId)
 
   var responseRef = requestRef.child('responses/' + this.id)
-    
+
+  // initiate peer connection
+  // we have to do this before actually writing our response because
+  // firebase can trigger events in the same tick which could circumvent
+  // the K check at the top of this method
+  this._connectToPeer(peerId, true, responseRef)
+
   // publish response
   responseRef.update({
     branch: this.branch || '-'
@@ -218,9 +224,6 @@ Node.prototype._onrequest = function (snapshot) {
       peer.destroy()
     }
   })
-
-  // initiate peer connection
-  this._connectToPeer(peerId, true, responseRef)
 }
 
 Node.prototype._onresponse = function (snapshot) {
