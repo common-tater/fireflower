@@ -6,7 +6,7 @@ var isRetina = window.devicePixelRatio > 1
 function NodeView (graph, model) {
   this.graph = graph
   this.model = model
-  this.model.on('statechange', this.render.bind(this))
+  this.model.on('statechange', this.graph.render.bind(this.graph))
 
   this.id = this.model.id
   this.x = 0
@@ -28,7 +28,7 @@ NodeView.prototype.render = function () {
     _attr: {
       'data-id': this.id
     },
-    '#label': this.id.slice(-5) + ' (' + this.model.branch + ')'
+    '#label': { _html: this.id + '<br>' + this.model.branch }
   })
 
   this.x = Math.min(this.x, this.graph.width)
@@ -54,7 +54,7 @@ NodeView.prototype.destroy = function () {
     this.el.parentNode.removeChild(this.el)
   }
 
-  this.model.disconnect()
   this.graph.remove(this)
+  this.model.disconnect()
   this.graph.render()
 }
