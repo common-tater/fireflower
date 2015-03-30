@@ -414,8 +414,10 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
   this.state = 'disconnected'
   this.emit('statechange')
 
-  // emit disconnect
-  this.emit('disconnect', peer)
+  // emit disconnect if we were connected
+  if (peer.didConnect) {
+    this.emit('disconnect', peer)
+  }
 
   // FIXME kill all downstream connections to ensure circles don't occur
   for (var i in this.peers) {
