@@ -48,6 +48,9 @@ Node.prototype.connect = function () {
     throw new Error('invalid state for connect')
   }
 
+  // make sure this is not set
+  this._preventReconnect = false
+
   // change state -> requesting
   debug(this.id + ' requesting connection')
   this.state = 'requesting'
@@ -95,7 +98,6 @@ Node.prototype.disconnect = function () {
   this.peers = {}
   this._takingRequests = false
   this._watchingConfig = false
-  this._preventReconnect = false
 
   return this
 }
