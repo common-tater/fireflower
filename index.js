@@ -423,7 +423,7 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
   }
 
   // attempt to reconnect if we were not disconnected intentionally
-  if (this._preventReconnect) {
+  if (!this._preventReconnect) {
     this.connect()
   }
 }
