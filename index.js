@@ -71,6 +71,7 @@ Node.prototype.connect = function () {
 
 Node.prototype.disconnect = function () {
   this.state = 'disconnected'
+  this._preventReconnect = true
 
   // teardown listeners
   this.removeListener('configure', this._doconnect)
@@ -93,6 +94,7 @@ Node.prototype.disconnect = function () {
   this.peers = {}
   this._takingRequests = false
   this._watchingConfig = false
+  this._preventReconnect = false
 
   return this
 }
@@ -398,9 +400,6 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
     return
   }
 
-  // remember previous state in case disconnect was called explictly
-  var previousState = this.state
-
   // stop responding to new requests
   this._requestsRef.off('child_added', this._onrequest)
   this._takingRequests = false
@@ -424,7 +423,7 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
   }
 
   // attempt to reconnect if we were not disconnected intentionally
-  if (previousState !== 'disconnected') {
+  if (this._preventReconnect) {
     this.connect()
   }
 }
