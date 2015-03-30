@@ -282,8 +282,6 @@ Node.prototype._connectToPeer = function (peerId, initiator, responseRef, branch
   })
 
   peer.id = peerId
-  peer._channel.maxPacketLifeTime = this.opts.maxPacketLifeTime || null
-  peer._channel.maxRetransmits = this.opts.maxRetransmits || null
 
   if (initiator) {
     this.peers[peer.id] = peer
@@ -323,6 +321,9 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   peer.removeAllListeners('connect')
   peer.removeAllListeners('signal')
   remoteSignals.off()
+
+  peer._channel.maxPacketLifeTime = this.opts.maxPacketLifeTime || null
+  peer._channel.maxRetransmits = this.opts.maxRetransmits || null
 
   // we were the initiator
   if (this.peers[peer.id]) {
