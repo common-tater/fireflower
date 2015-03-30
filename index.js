@@ -102,12 +102,19 @@ Node.prototype.disconnect = function () {
 Node.prototype._onconfig = function (snapshot) {
   var data = snapshot.val()
 
+  if (!data) {
+    this.emit('error', new Error('missing configuration'))
+    return
+  }
+
   if (!data.K) {
-    throw new Error('configuration did not supply valid value for K')
+    this.emit('error', new Error('configuration did not supply valid value for K'))
+    return
   }
 
   if (!data.root) {
-    throw new Error('configuration did not supply a valid root')
+    this.emit('error', new Error('configuration did not supply a valid root'))
+    return
   }
 
   this.config = data
