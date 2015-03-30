@@ -11,13 +11,14 @@ var CONNECTION_TIMEOUT = 2000
 
 inherits(Node, events.EventEmitter)
 
-function Node (url, id) {
+function Node (url, opts) {
   if (!(this instanceof Node)) {
-    return new Node(url, id)
+    return new Node(url, opts)
   }
 
   this.url = url
-  this.id = id
+  this.opts = opts || {}
+  this.id = opts.id
   this.state = 'disconnected'
   this.config = {}
   this.peers = {}
@@ -281,6 +282,8 @@ Node.prototype._connectToPeer = function (peerId, initiator, responseRef, branch
   })
 
   peer.id = peerId
+  peer._channel.maxPacketLifeTime = this.opts.maxPacketLifeTime || null
+  peer._channel.maxRetransmits = this.opts.maxRetransmits || null
 
   if (initiator) {
     this.peers[peer.id] = peer

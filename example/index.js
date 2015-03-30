@@ -1,7 +1,7 @@
 var fireflower = require('../')
 var Graph = require('./src/graph')
 
-window.root = fireflower('fireflower.firebaseio.com', '0')
+window.root = fireflower('fireflower.firebaseio.com', { id: '0' })
 window.root.connect()
 
 window.root.once('connect', function () {
