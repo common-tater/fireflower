@@ -1,23 +1,66 @@
-# FireFlower
-Scalable and resilient data broadcasting between peers, using Firebase as the backend, and k as the maximum number of downstream connections from any one peer.
+# Fireflower
+[K-ary trees](http://en.wikipedia.org/wiki/K-ary_tree) of [RTCDataChannel](http://www.w3.org/TR/webrtc/#rtcdatachannel) connected nodes.
 
-A "broadcaster" is the one (and only one) peer that will be at the root of the tree. A "subscriber" is any peer that will be receiving the data being broadcast.
+## Why
+Scalable broadcasting for streams of live data.
 
-Set the broadcaster with the setBroadcaster() function, and add each new subscriber with the subcribe() function. When the broadcaster is set or any new subscriber is added, an entry is created in Firebase under the 'available_peers' node. Any child of 'available_peers' is considered to be available in that it isn't yet full with downstream subscribers.
-
-Scenarios:
-1. Listener is added: When a new subscriber A is added, the first available peer B is picked from the list, and an entry for A is added to B's list of subscribers.
-2. Full node: When B's list of subscribers is full (i.e. the number of subscribers equals k), the Firebase element for B is removed from the 'available_peers' node, so no new subscribers can find it
-3. Listener is removed: When a subscriber A is removed, if A has any downstream subscribers in its 'subscribers' Firebase node, for each one find an available substitute by pulling one from the 'available_peers' node (that isn't the one to be removed or itself). Once that is done, subscriber A is removed from its upstream peer B's list of subscribers (not implemented yet!), so that space can be made available for a new peer.
-4. Broadcaster is removed: (not implemented yet!)
-
-## Firebase
-Make sure to have set up a Firebase account and database, set the rules as described in the etc/rules.json file, and pass the Firebase URL to the FireFlower constructor.
+## How
+* [SimplePeer](https://github.com/feross/simple-peer) for representing peer node `RTCDataChannel` connections.
+* [Firebase](https://www.firebase.com) for `RTCPeerConnection` signaling.
 
 ## Example
 `npm run example`
 
-When the page first loads, a broadcaster is created and added to the tree. Click the "Add Listener" button to add addition subscribers. Right now the page doesn't show anything, but be watching Firebase to see how the connections are being made. To remove a peer, type the ID in the text box and click the "Remove Listener" button, and see the remapping being done in Firebase.
+## Prerequisite
+The following database structure must exist before the first node attempts to join:
+```json
+{
+  "configuration": {
+    "K": 3,
+    "root": "id-of-the-root-node"
+  }
+}
+```
+
+## Require
+```javascript
+var fireflower = require('fireflower')
+```
+
+## Constructor
+```javascript
+var node = fireflower('tree-signals-url.firebaseio.com', {
+  id: OPTIONAL_NODE_ID_TO_USE,
+  maxRetransmits: OPTIONAL_INT,
+  maxPacketLifeTime: OPTIONAL_TIME_IN_MS
+})
+```
+
+## API
+#### `node.connect()`
+Publish a request to join the tree. If disconnected, instances will republish their request to join.
+
+#### `node.disconnect()`
+Disconnect and / or halt any attempts to reconnect.
+
+## Events
+#### `node.emit('connect', SimplePeerInstance)`
+An upstream node has responded to the instance's request to join the tree and has established an `RTCDataChannel` connection.
+
+#### `node.emit('disconnect', SimplePeerInstance)`
+Connection to upstream node was lost.
+
+#### `node.emit('peerconnect', SimplePeerInstance)`
+Response to a connection request was accepted and a downstream node was connected.
+
+#### `node.emit('peerdisconnect', SimplePeerInstance)`
+Response to a connection request was accepted and a downstream node was connected.
+
+#### `node.emit('configure')`
+Configuration data was read for the first time or updated.
+
+#### `node.emit('error', error)`
+A configuration error occurred.
 
 ## Note
 Just a prototype for the moment!
