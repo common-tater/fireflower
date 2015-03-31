@@ -1,4 +1,4 @@
-# Fireflower
+# fireflower
 [K-ary trees](http://en.wikipedia.org/wiki/K-ary_tree) of [RTCDataChannel](http://www.w3.org/TR/webrtc/#rtcdatachannel) connected nodes.
 
 ## Why
