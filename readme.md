@@ -54,7 +54,7 @@ Connection to upstream node was lost.
 Response to a connection request was accepted and a downstream node was connected.
 
 #### `node.emit('peerdisconnect', SimplePeerInstance)`
-Response to a connection request was accepted and a downstream node was connected.
+The connection to a downstream node was lost.
 
 #### `node.emit('configure')`
 Configuration data was read for the first time or updated.
