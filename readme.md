@@ -31,6 +31,7 @@ var fireflower = require('fireflower')
 ```javascript
 var node = fireflower('tree-signals-url.firebaseio.com', {
   id: OPTIONAL_NODE_ID_TO_USE,
+  ordered: OPTIONAL_BOOLEAN,    // defaults to true
   maxRetransmits: OPTIONAL_INT,
   maxPacketLifeTime: OPTIONAL_TIME_IN_MS
 })

@@ -334,6 +334,7 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
 
   peer._channel.maxPacketLifeTime = this.opts.maxPacketLifeTime || null
   peer._channel.maxRetransmits = this.opts.maxRetransmits || null
+  peer._channel.ordered = this.opts.ordered === false ? false : true
 
   // we were the initiator
   if (this.peers[peer.id]) {
