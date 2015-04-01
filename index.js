@@ -6,7 +6,6 @@ var inherits = require('inherits')
 var Firebase = require('firebase')
 var SimplePeer = require('simple-peer')
 
-var RETRY_DELAY = 2000
 var CONNECTION_TIMEOUT = 2000
 
 inherits(Node, events.EventEmitter)
@@ -27,6 +26,7 @@ function Node (url, opts) {
   this._ref = new Firebase(this.url)
   this._requestsRef = this._ref.child('requests')
   this._configRef = this._ref.child('configuration')
+  this._logsRef = this._ref.child('logs')
 
   // if we weren't assigned an id, get one from the db
   this.id = this.id || this._requestsRef.push().key()
@@ -40,16 +40,27 @@ function Node (url, opts) {
   this._onresponse = this._onresponse.bind(this)
   this._onrequest = this._onrequest.bind(this)
 
+  this._interval = null
+
   events.EventEmitter.call(this)
 }
 
-Node.prototype.connect = function () {
+Node.prototype.connect = function (shouldReportStatus) {
   if (this.state !== 'disconnected') {
     throw new Error('invalid state for connect')
   }
 
   // make sure this is not set
   this._preventReconnect = false
+
+  // set the recurring logging that frequently posts our
+  // known state of our world to firebase, so it can
+  // be used to visualize the state of the tree
+  if (shouldReportStatus) {
+    this._interval = setInterval(this.reportStatus.bind(this),
+    // TODO: change the next line to this when it works: process.env.PEER_REPORTING_INTERVAL)
+    5000)
+  }
 
   // change state -> requesting
   debug(this.id + ' requesting connection')
@@ -76,6 +87,9 @@ Node.prototype.connect = function () {
 Node.prototype.disconnect = function () {
   this.state = 'disconnected'
   this._preventReconnect = true
+
+  // stop any reporting that may have been happening
+  clearInterval(this._interval)
 
   // teardown listeners
   this.removeListener('configure', this._doconnect)
@@ -443,4 +457,8 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
   if (!this._preventReconnect) {
     this.connect()
   }
+}
+
+Node.prototype.reportStatus = function () {
+  debug('reporting status ' + this.id)
 }
