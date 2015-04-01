@@ -42,6 +42,9 @@ function Node (url, opts) {
   this._onresponse = this._onresponse.bind(this)
   this._onmaskupdate = this._onmaskupdate.bind(this)
 
+  // when the connection state changes, update the log
+  this.on('statechange', this.reportStatus.bind(this))
+
   this._interval = null
 
   events.EventEmitter.call(this)
