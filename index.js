@@ -122,8 +122,6 @@ Node.prototype.disconnect = function () {
 
   // stop any reporting that may have been happening
   clearInterval(this._interval)
-  // remove this node's report node completely
-  this._logsRef.child(this.id).remove()
 
   // teardown listeners
   this.removeListener('configure', this._doconnect)
