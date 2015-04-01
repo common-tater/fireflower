@@ -47,6 +47,8 @@ function Node (url, opts) {
 
   this._interval = null
 
+  this._interval = null
+
   events.EventEmitter.call(this)
 }
 
@@ -93,6 +95,9 @@ Node.prototype.disconnect = function () {
   this.state = 'disconnected'
   this._preventReconnect = true
   this._watchingConfig = false
+
+  // stop any reporting that may have been happening
+  clearInterval(this._interval)
 
   // stop any reporting that may have been happening
   clearInterval(this._interval)
@@ -482,6 +487,9 @@ Node.prototype._reviewRequests = function () {
     this._requestsRef.off('child_added', this._onrequest)
     this._requestsRef.on('child_added', this._onrequest)
   }
+
+Node.prototype.reportStatus = function () {
+  debug('reporting status ' + this.id)
 }
 
 Node.prototype.reportStatus = function () {
