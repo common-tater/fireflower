@@ -1,10 +1,14 @@
 {
   "rules": {
-    "available_peers": {
+    "configuration": {
       ".read": true,
       ".write": true
     },
-    "peer_signals": {
+    "requests": {
+      ".read": true,
+      ".write": true
+    },
+    "logs": {
       ".read": true,
       ".write": true
     }
