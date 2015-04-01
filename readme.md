@@ -38,8 +38,8 @@ var node = fireflower('tree-signals-url.firebaseio.com', {
 ```
 
 ## API
-#### `node.connect()`
-Publish a request to join the tree. If disconnected, instances will republish their request to join.
+#### `node.connect(ShouldReportStatus)`
+Publish a request to join the tree. If disconnected, instances will republish their request to join. If the optional ShouldReportStatus bool is set to true, the node will report its status at an interval
 
 #### `node.disconnect()`
 Disconnect and / or halt any attempts to reconnect.
