@@ -75,9 +75,13 @@ Node.prototype.connect = function (shouldReportStatus) {
   // be used to visualize the state of the tree
   if (shouldReportStatus) {
 <<<<<<< HEAD
+<<<<<<< HEAD
     this.reportStatus()
 =======
 >>>>>>> stub for reporting status every 5 seconds if the node opts in
+=======
+    this.reportStatus()
+>>>>>>> fixed status object bug
     this._interval = setInterval(this.reportStatus.bind(this),
     // TODO: change the next line to this when it works: process.env.PEER_REPORTING_INTERVAL)
     5000)
