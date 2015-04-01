@@ -498,6 +498,7 @@ function generateNodeStatusObject () {
   return {
     id: this.id,
     upstream_peer_id: upstreamPeerId,
+    state: this.state,
     timestamp: new Date().getTime()
   }
 }
