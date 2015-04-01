@@ -467,11 +467,12 @@ Node.prototype.reportStatus = function () {
 
 function generateNodeStatusObject () {
   var upstreamPeerId = null
-  // in the case that we're the root, it seems the upstreamPeerId
-  // is set to ourself, but we don't want to report it that way
-  if (this.root && this.root.id && this.id !== this.root.id) {
+  if (this.root && this.root.id) {
     upstreamPeerId = this.root.id
   }
+  // the root will have its upstreamPeerId set as itself, but
+  // that's a signal that it's the root, not that it's a node
+  // who hasn't found an upstream peer yet
 
   return {
     id: this.id,
