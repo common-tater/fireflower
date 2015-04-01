@@ -52,6 +52,9 @@ function Node (url, opts) {
 
   this._interval = null
 
+  // when the connection state changes, update the log
+  this.on('statechange', this.reportStatus.bind(this))
+
   this._interval = null
 
   events.EventEmitter.call(this)
