@@ -18,7 +18,7 @@ function Node (url, opts) {
 
   this.url = url
   this.opts = opts || {}
-  this.id = opts.id
+  this.id = this.opts.id
   this.state = 'disconnected'
   this.config = {}
   this.peers = {}
@@ -38,7 +38,7 @@ function Node (url, opts) {
   this._onconfig = this._onconfig.bind(this)
   this._doconnect = this._doconnect.bind(this)
   this._onresponse = this._onresponse.bind(this)
-  this._onrequest = this._onrequest.bind(this) 
+  this._onrequest = this._onrequest.bind(this)
 
   events.EventEmitter.call(this)
 }
@@ -273,7 +273,7 @@ Node.prototype._onresponse = function (snapshot) {
   this.emit('statechange')
 
   // stop taking responses
-  // WARNING: no idea why, but calling off() can trigger additional 
+  // WARNING: no idea why, but calling off() can trigger additional
   // events in the same tick so be sure to do it after changing state
   this._responsesRef.off('child_added', this._onresponse)
   this._requestRef.child('removal_flag').off()
@@ -301,7 +301,7 @@ Node.prototype._connectToPeer = function (peerId, initiator, responseRef, branch
 
   peer.on('connect', this._onpeerConnect.bind(this, peer, remoteSignals))
   peer.on('close', this._onpeerClose.bind(this, peer, remoteSignals))
-  
+
   peer.on('error', function (err) {
     debug(this.id + ' saw peer connection error', err)
   })
@@ -405,7 +405,7 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
       }
     }
 
-    // if we are connected but not currently taking requests 
+    // if we are connected but not currently taking requests
     // and back below K, start accepting them again
     if (this.state === 'connected' && Object.keys(this.peers).length < this.config.K && !this._takingRequests) {
       this._takingRequests = true
