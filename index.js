@@ -496,12 +496,13 @@ Node.prototype.reportStatus = function () {
 }
 
 function generateNodeStatusObject () {
-  var upstreamPeerId = this.root.id
+  var upstreamPeerId = null
   // in the case that we're the root, it seems the upstreamPeerId
   // is set to ourself, but we don't want to report it that way
-  if (this.id === upstreamPeerId) {
-    upstreamPeerId = null
+  if (this.root && this.root.id && this.id !== this.root.id) {
+    upstreamPeerId = this.root.id
   }
+
   return {
     id: this.id,
     upstream_peer_id: upstreamPeerId
