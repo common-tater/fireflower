@@ -109,6 +109,8 @@ Node.prototype.disconnect = function () {
 
   // stop any reporting that may have been happening
   clearInterval(this._interval)
+  // remove this node's report node completely
+  this._logsRef.child(this.id).remove()
 
   // teardown listeners
   this.removeListener('configure', this._doconnect)
@@ -497,7 +499,21 @@ Node.prototype._reviewRequests = function () {
   }
 
 Node.prototype.reportStatus = function () {
-  debug('reporting status ' + this.id)
+  var nodeStatus = generateNodeStatusObject.call(this)
+  this._logsRef.child(this.id).update(nodeStatus)
+}
+
+function generateNodeStatusObject () {
+  var upstreamPeerId = this.root.id
+  // in the case that we're the root, it seems the upstreamPeerId
+  // is set to ourself, but we don't want to report it that way
+  if (this.id === upstreamPeerId) {
+    upstreamPeerId = null
+  }
+  return {
+    id: this.id,
+    upstream_peer_id: upstreamPeerId
+  }
 }
 
 Node.prototype.reportStatus = function () {
