@@ -57,6 +57,7 @@ Node.prototype.connect = function (shouldReportStatus) {
   // known state of our world to firebase, so it can
   // be used to visualize the state of the tree
   if (shouldReportStatus) {
+    this.reportStatus()
     this._interval = setInterval(this.reportStatus.bind(this),
     // TODO: change the next line to this when it works: process.env.PEER_REPORTING_INTERVAL)
     5000)
@@ -467,12 +468,13 @@ Node.prototype.reportStatus = function () {
 }
 
 function generateNodeStatusObject () {
-  var upstreamPeerId = this.root.id
+  var upstreamPeerId = null
   // in the case that we're the root, it seems the upstreamPeerId
   // is set to ourself, but we don't want to report it that way
-  if (this.id === upstreamPeerId) {
-    upstreamPeerId = null
+  if (this.root && this.root.id && this.id !== this.root.id) {
+    upstreamPeerId = this.root.id
   }
+
   return {
     id: this.id,
     upstream_peer_id: upstreamPeerId
