@@ -43,12 +43,9 @@ function Node (url, opts) {
   this._onresponse = this._onresponse.bind(this)
   this._onrequest = this._onrequest.bind(this)
 
-<<<<<<< HEAD
   // when the connection state changes, update the log
   this.on('statechange', this.reportStatus.bind(this))
 
-=======
->>>>>>> stub for reporting status every 5 seconds if the node opts in
   this._interval = null
 
   events.EventEmitter.call(this)
@@ -66,14 +63,7 @@ Node.prototype.connect = function (shouldReportStatus) {
   // known state of our world to firebase, so it can
   // be used to visualize the state of the tree
   if (shouldReportStatus) {
-<<<<<<< HEAD
-<<<<<<< HEAD
     this.reportStatus()
-=======
->>>>>>> stub for reporting status every 5 seconds if the node opts in
-=======
-    this.reportStatus()
->>>>>>> fixed status object bug
     this._interval = setInterval(this.reportStatus.bind(this),
     // TODO: change the next line to this when it works: process.env.PEER_REPORTING_INTERVAL)
     5000)
