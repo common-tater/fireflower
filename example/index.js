@@ -1,4 +1,4 @@
-var fireflower = require('../')
+var fireflower = require('../')(require('firebase'))
 var Graph = require('./src/graph')
 
 window.root = fireflower('fireflower.firebaseio.com', { id: '0' })

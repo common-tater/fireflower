@@ -1,6 +1,6 @@
 module.exports = GraphView
 
-var fireflower = require('../../')
+var fireflower = require('../../')(require('firebase'))
 var NodeView = require('./node')
 var isRetina = window.devicePixelRatio > 1
 
