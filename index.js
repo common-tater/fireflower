@@ -204,7 +204,8 @@ Node.prototype._onrequest = function (snapshot) {
   }
 
   // prevent circles
-  if (this.branch && this.branch.indexOf(request.branch) === 0) {
+  if (this.branch.slice(0, 5) === request.branch.slice(0, 5) &&
+      this.branch.length >= request.branch.length) {
     return
   }
 
