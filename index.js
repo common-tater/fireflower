@@ -153,7 +153,7 @@ Node.prototype._doconnect = function () {
   }
 
   // make sure we have a branch
-  this.branch = this.branch || this.id
+  this.branch = this.branch || this.id.slice(-5)
 
   // we are not root so publish a connection request
   this._dorequest()
@@ -206,7 +206,7 @@ Node.prototype._onrequest = function (snapshot) {
   }
 
   // prevent circles
-  if (request.branch === this.branch) {
+  if (this.branch && this.branch.indexOf(request.branch) === 0) {
     return
   }
 
@@ -361,7 +361,7 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   this.root = peer
 
   // update branch
-  this.branch = peer.branch || this.id
+  this.branch = peer.branch + this.id.slice(-5)
 
   // change state -> connected
   debug(this.id + ' was connected by ' + peer.id)
