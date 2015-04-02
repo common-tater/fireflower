@@ -295,7 +295,7 @@ Node.prototype._connectToPeer = function (peerId, initiator, responseRef, branch
   }
 
   peer.on('connect', this._onpeerConnect.bind(this, peer, remoteSignals))
-  peer.on('close', this._onpeerClose.bind(this, peer, remoteSignals))
+  peer.on('close', this._onpeerDisconnect.bind(this, peer, remoteSignals))
 
   peer.on('error', function (err) {
     debug(this.id + ' saw peer connection error', err)
@@ -331,20 +331,25 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   peer._channel.maxRetransmits = this.opts.maxRetransmits || null
   peer._channel.ordered = this.opts.ordered === false ? false : true
 
-  // we were the initiator
   if (this.peers[peer.id]) {
-    // emit peerconnect
-    debug(this.id + ' did connect peer ' + peer.id)
-    this.emit('peerconnect', peer)
-
-    // stop responding to requests if peers > K
-    if (Object.keys(this.peers).length >= this.config.K) {
-      this._requestsRef.off('child_added', this._onrequest)
-    }
-
-    return
+    this._ondownstreamConnect(peer)
+  } else {
+    this._onupstreamConnect(peer)
   }
+}
 
+Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
+  peer.removeAllListeners()
+  remoteSignals.off()
+
+  if (this.peers[peer.id]) {
+    this._ondownstreamDisconnect(peer)
+  } else {
+    this._onupstreamDisconnect(peer)
+  }
+}
+
+Node.prototype._onupstreamConnect = function (peer) {
   // remove our request
   this._requestRef.remove()
 
@@ -374,38 +379,7 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   }
 }
 
-Node.prototype._onpeerClose = function (peer, remoteSignals) {
-  peer.removeAllListeners()
-  remoteSignals.off()
-
-  // whoever just disconnected was downstream
-  if (this.peers[peer.id]) {
-    // remove from lookup
-    delete this.peers[peer.id]
-
-    // emit events and potentially remove stale requests
-    if (peer.didConnect) {
-      debug(this.id + ' lost connection to peer ' + peer.id)
-      this.emit('peerdisconnect', peer)
-    } else {
-      if (peer.requestWithdrawn) {
-        debug(this.id + ' saw request withdrawn by ' + peer.id)
-      } else {
-        debug(this.id + ' removing stale request by ' + peer.id)
-        this._requestsRef.child(peer.id).remove()
-      }
-    }
-
-    // if we are connected but not currently taking requests
-    // and back below K, start accepting them again
-    if (this.state === 'connected' && Object.keys(this.peers).length < this.config.K) {
-      this._requestsRef.off('child_added', this._onrequest)
-      this._requestsRef.on('child_added', this._onrequest)
-    }
-
-    return
-  }
-
+Node.prototype._onupstreamDisconnect = function (peer) {
   // stop responding to new requests
   this._requestsRef.off('child_added', this._onrequest)
 
@@ -432,5 +406,41 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
   // attempt to reconnect if we were not disconnected intentionally
   if (!this._preventReconnect) {
     this.connect()
+  }
+}
+
+Node.prototype._ondownstreamConnect = function (peer) {
+  // emit peerconnect
+  debug(this.id + ' did connect peer ' + peer.id)
+  this.emit('peerconnect', peer)
+
+  // stop responding to requests if peers > K
+  if (Object.keys(this.peers).length >= this.config.K) {
+    this._requestsRef.off('child_added', this._onrequest)
+  }
+}
+
+Node.prototype._ondownstreamDisconnect = function (peer) {
+  // remove from lookup
+  delete this.peers[peer.id]
+
+  // emit events and potentially remove stale requests
+  if (peer.didConnect) {
+    debug(this.id + ' lost connection to peer ' + peer.id)
+    this.emit('peerdisconnect', peer)
+  } else {
+    if (peer.requestWithdrawn) {
+      debug(this.id + ' saw request withdrawn by ' + peer.id)
+    } else {
+      debug(this.id + ' removing stale request by ' + peer.id)
+      this._requestsRef.child(peer.id).remove()
+    }
+  }
+
+  // if we are connected but not currently taking requests
+  // and back below K, start accepting them again
+  if (this.state === 'connected' && Object.keys(this.peers).length < this.config.K) {
+    this._requestsRef.off('child_added', this._onrequest)
+    this._requestsRef.on('child_added', this._onrequest)
   }
 }
