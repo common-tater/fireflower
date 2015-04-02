@@ -95,7 +95,6 @@ Node.prototype.disconnect = function () {
 
   this.root = null
   this.peers = {}
-  this._takingRequests = false
   this._watchingConfig = false
 
   return this
@@ -145,7 +144,6 @@ Node.prototype._doconnect = function () {
       self.emit('connect')
 
       // start responding to requests
-      self._takingRequests = true
       self._requestsRef.on('child_added', self._onrequest)
     })
 
@@ -342,7 +340,6 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
     // stop responding to requests if peers > K
     if (Object.keys(this.peers).length >= this.config.K) {
       this._requestsRef.off('child_added', this._onrequest)
-      this._takingRequests = false
     }
 
     return
@@ -372,8 +369,7 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   this.emit('connect', peer)
 
   // start responding to requests
-  if (Object.keys(this.peers).length < this.config.K && !this._takingRequests) {
-    this._takingRequests = true
+  if (Object.keys(this.peers).length < this.config.K) {
     this._requestsRef.on('child_added', this._onrequest)
   }
 }
@@ -402,8 +398,8 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
 
     // if we are connected but not currently taking requests
     // and back below K, start accepting them again
-    if (this.state === 'connected' && Object.keys(this.peers).length < this.config.K && !this._takingRequests) {
-      this._takingRequests = true
+    if (this.state === 'connected' && Object.keys(this.peers).length < this.config.K) {
+      this._requestsRef.off('child_added', this._onrequest)
       this._requestsRef.on('child_added', this._onrequest)
     }
 
@@ -412,7 +408,6 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
 
   // stop responding to new requests
   this._requestsRef.off('child_added', this._onrequest)
-  this._takingRequests = false
 
   // remove request
   this._requestRef.remove()
