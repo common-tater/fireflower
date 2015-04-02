@@ -6,7 +6,6 @@ var inherits = require('inherits')
 var Firebase = require('firebase')
 var SimplePeer = require('simple-peer')
 
-var RETRY_DELAY = 2000
 var CONNECTION_TIMEOUT = 2000
 
 inherits(Node, events.EventEmitter)
@@ -123,7 +122,7 @@ Node.prototype._onconfig = function (snapshot) {
   }
 
   this.config = data
-  debug(this.id + ' saw configuration update')
+  debug(this.id + ' updated configuration')
   this.emit('configure')
 }
 
@@ -171,8 +170,6 @@ Node.prototype._doconnect = function () {
 }
 
 Node.prototype._dorequest = function () {
-  var self = this
-
   this._requestRef.update({
     branch: this.branch,
     removal_flag: {
@@ -338,7 +335,6 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
 
   // we were the initiator
   if (this.peers[peer.id]) {
-
     // emit peerconnect
     debug(this.id + ' did connect peer ' + peer.id)
     this.emit('peerconnect', peer)
@@ -388,7 +384,6 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
 
   // whoever just disconnected was downstream
   if (this.peers[peer.id]) {
-
     // remove from lookup
     delete this.peers[peer.id]
 
