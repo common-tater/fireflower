@@ -14,7 +14,7 @@ function NodeView (graph, model) {
   this.width = 30
   this.height = 30
 
-  this.el = hyperglue('<div class="node"><div id="circle"></div><div id="label"></div></div>')
+  this.el = hyperglue('<div class="node"><div id="circle"></div><div id="label"><div id="id"></div><div id="branch"></div></div></div>')
   this.el.querySelector('#circle').addEventListener('click', this.destroy.bind(this))
 }
 
@@ -28,7 +28,8 @@ NodeView.prototype.render = function () {
     _attr: {
       'data-id': this.id
     },
-    '#label': { _html: this.id + '<br>' + this.model.branch }
+    '#label #id': this.id,
+    '#label #branch': this.model.branch
   })
 
   this.x = Math.min(this.x, this.graph.width)
