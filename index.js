@@ -6,7 +6,6 @@ var inherits = require('inherits')
 var Firebase = require('firebase')
 var SimplePeer = require('simple-peer')
 
-var RETRY_DELAY = 2000
 var CONNECTION_TIMEOUT = 2000
 
 inherits(Node, events.EventEmitter)
@@ -96,7 +95,6 @@ Node.prototype.disconnect = function () {
 
   this.root = null
   this.peers = {}
-  this._takingRequests = false
   this._watchingConfig = false
 
   return this
@@ -123,7 +121,7 @@ Node.prototype._onconfig = function (snapshot) {
   }
 
   this.config = data
-  debug(this.id + ' saw configuration update')
+  debug(this.id + ' updated configuration')
   this.emit('configure')
 }
 
@@ -146,7 +144,6 @@ Node.prototype._doconnect = function () {
       self.emit('connect')
 
       // start responding to requests
-      self._takingRequests = true
       self._requestsRef.on('child_added', self._onrequest)
     })
 
@@ -154,7 +151,7 @@ Node.prototype._doconnect = function () {
   }
 
   // make sure we have a branch
-  this.branch = this.branch || this.id
+  this.branch = this.branch || this.id.slice(-5)
 
   // we are not root so publish a connection request
   this._dorequest()
@@ -171,8 +168,6 @@ Node.prototype._doconnect = function () {
 }
 
 Node.prototype._dorequest = function () {
-  var self = this
-
   this._requestRef.update({
     branch: this.branch,
     removal_flag: {
@@ -209,16 +204,24 @@ Node.prototype._onrequest = function (snapshot) {
   }
 
   // prevent circles
-  if (request.branch === this.branch) {
+  if (this.branch.slice(0, 5) === request.branch.slice(0, 5) &&
+      this.branch.length >= request.branch.length) {
     return
   }
 
-  // while rare, it is possible to see a peer we already knew about if we
-  // did not witness them disconnect before they attempted to reconnect
-  // if that happens we can destroy them in the same tick and respond
-  // to their request immediately
-  if (this.peers[peerId]) {
-    this.peers[peerId].destroy()
+  // it is possible to see a peer we already knew about
+  var knownPeer = this.peers[peerId]
+  if (knownPeer) {
+    if (knownPeer.didConnect) {
+      // we may not have witnessed them disconnect before they re-requested
+      // if that happens we destroy them in the same tick and respond immediately
+      knownPeer.destroy()
+    } else {
+      // we may have timed out while trying to connect to somebody else
+      // if that happens we may have gotten a fresh list of requests
+      // that included this peer which we are still connecting to
+      return
+    }
   }
 
   debug(this.id + ' saw request by ' + peerId)
@@ -300,7 +303,7 @@ Node.prototype._connectToPeer = function (peerId, initiator, responseRef, branch
   }
 
   peer.on('connect', this._onpeerConnect.bind(this, peer, remoteSignals))
-  peer.on('close', this._onpeerClose.bind(this, peer, remoteSignals))
+  peer.on('close', this._onpeerDisconnect.bind(this, peer, remoteSignals))
 
   peer.on('error', function (err) {
     debug(this.id + ' saw peer connection error', err)
@@ -336,22 +339,25 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   peer._channel.maxRetransmits = this.opts.maxRetransmits || null
   peer._channel.ordered = this.opts.ordered === false ? false : true
 
-  // we were the initiator
   if (this.peers[peer.id]) {
-
-    // emit peerconnect
-    debug(this.id + ' did connect peer ' + peer.id)
-    this.emit('peerconnect', peer)
-
-    // stop responding to requests if peers > K
-    if (Object.keys(this.peers).length >= this.config.K) {
-      this._requestsRef.off('child_added', this._onrequest)
-      this._takingRequests = false
-    }
-
-    return
+    this._ondownstreamConnect(peer)
+  } else {
+    this._onupstreamConnect(peer)
   }
+}
 
+Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
+  peer.removeAllListeners()
+  remoteSignals.off()
+
+  if (this.peers[peer.id]) {
+    this._ondownstreamDisconnect(peer)
+  } else {
+    this._onupstreamDisconnect(peer)
+  }
+}
+
+Node.prototype._onupstreamConnect = function (peer) {
   // remove our request
   this._requestRef.remove()
 
@@ -365,7 +371,7 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   this.root = peer
 
   // update branch
-  this.branch = peer.branch || this.id
+  this.branch = peer.branch + this.id.slice(-5)
 
   // change state -> connected
   debug(this.id + ' was connected by ' + peer.id)
@@ -376,48 +382,14 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   this.emit('connect', peer)
 
   // start responding to requests
-  if (Object.keys(this.peers).length < this.config.K && !this._takingRequests) {
-    this._takingRequests = true
+  if (Object.keys(this.peers).length < this.config.K) {
     this._requestsRef.on('child_added', this._onrequest)
   }
 }
 
-Node.prototype._onpeerClose = function (peer, remoteSignals) {
-  peer.removeAllListeners()
-  remoteSignals.off()
-
-  // whoever just disconnected was downstream
-  if (this.peers[peer.id]) {
-
-    // remove from lookup
-    delete this.peers[peer.id]
-
-    // emit events and potentially remove stale requests
-    if (peer.didConnect) {
-      debug(this.id + ' lost connection to peer ' + peer.id)
-      this.emit('peerdisconnect', peer)
-    } else {
-      if (peer.requestWithdrawn) {
-        debug(this.id + ' saw request withdrawn by ' + peer.id)
-      } else {
-        debug(this.id + ' removing stale request by ' + peer.id)
-        this._requestsRef.child(peer.id).remove()
-      }
-    }
-
-    // if we are connected but not currently taking requests
-    // and back below K, start accepting them again
-    if (this.state === 'connected' && Object.keys(this.peers).length < this.config.K && !this._takingRequests) {
-      this._takingRequests = true
-      this._requestsRef.on('child_added', this._onrequest)
-    }
-
-    return
-  }
-
+Node.prototype._onupstreamDisconnect = function (peer) {
   // stop responding to new requests
   this._requestsRef.off('child_added', this._onrequest)
-  this._takingRequests = false
 
   // remove request
   this._requestRef.remove()
@@ -442,5 +414,41 @@ Node.prototype._onpeerClose = function (peer, remoteSignals) {
   // attempt to reconnect if we were not disconnected intentionally
   if (!this._preventReconnect) {
     this.connect()
+  }
+}
+
+Node.prototype._ondownstreamConnect = function (peer) {
+  // emit peerconnect
+  debug(this.id + ' did connect peer ' + peer.id)
+  this.emit('peerconnect', peer)
+
+  // stop responding to requests if peers > K
+  if (Object.keys(this.peers).length >= this.config.K) {
+    this._requestsRef.off('child_added', this._onrequest)
+  }
+}
+
+Node.prototype._ondownstreamDisconnect = function (peer) {
+  // remove from lookup
+  delete this.peers[peer.id]
+
+  // emit events and potentially remove stale requests
+  if (peer.didConnect) {
+    debug(this.id + ' lost connection to peer ' + peer.id)
+    this.emit('peerdisconnect', peer)
+  } else {
+    if (peer.requestWithdrawn) {
+      debug(this.id + ' saw request withdrawn by ' + peer.id)
+    } else {
+      debug(this.id + ' removing stale request by ' + peer.id)
+      this._requestsRef.child(peer.id).remove()
+    }
+  }
+
+  // if we are connected but not currently taking requests
+  // and back below K, start accepting them again
+  if (this.state === 'connected' && Object.keys(this.peers).length < this.config.K) {
+    this._requestsRef.off('child_added', this._onrequest)
+    this._requestsRef.on('child_added', this._onrequest)
   }
 }

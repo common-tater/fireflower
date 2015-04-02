@@ -44,6 +44,10 @@
       }
       .graph .nodes .node {
         position: absolute;
+        transform: translate3d(-50%, -15px, 0);
+      }
+      .graph .nodes .node.root {
+        transform: translate3d(-50%, -23px, 0);
       }
       .graph .nodes .node #circle {
         display: table;
@@ -55,8 +59,6 @@
         position: relative;
         width: 30px;
         height: 30px;
-        top: -15px;
-        left: -50%;
       }
       .graph .nodes .node.root #circle {
         background-color: rgba(255, 238, 68, 0.5);
@@ -65,15 +67,18 @@
         cursor: auto;
         width: 46px;
         height: 46px;
-        top: -23px;
       }
       .graph .nodes .node #label {
         position: relative;
         letter-spacing: 1px;
-        left: -50%;
-        margin-top: -2%;
+        margin-top: 10px;
         color: #666;
         pointer-events: none;
+        text-align: center;
+      }
+      .graph .nodes .node #label #branch {
+        font-size: 7px;
+        margin-top: 5px;
       }
     </style>
   </head>
