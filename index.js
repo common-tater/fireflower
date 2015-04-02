@@ -1,10 +1,13 @@
-module.exports = Node
+module.exports = function (_Firebase) {
+  Firebase = _Firebase
+  return Node
+}
 
 var debug = require('debug')('fireflower')
 var events = require('events')
 var inherits = require('inherits')
-var Firebase = require('firebase')
 var SimplePeer = require('simple-peer')
+var Firebase = null
 
 var CONNECTION_TIMEOUT = 2000
 
