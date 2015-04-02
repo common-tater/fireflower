@@ -473,6 +473,7 @@ Node.prototype._ondownstreamDisconnect = function (peer) {
     this._requestsRef.off('child_added', this._onrequest)
     this._requestsRef.on('child_added', this._onrequest)
   }
+}
 
 Node.prototype.reportStatus = function () {
   var nodeStatus = generateNodeStatusObject.call(this)
