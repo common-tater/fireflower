@@ -208,12 +208,19 @@ Node.prototype._onrequest = function (snapshot) {
     return
   }
 
-  // while rare, it is possible to see a peer we already knew about if we
-  // did not witness them disconnect before they attempted to reconnect
-  // if that happens we can destroy them in the same tick and respond
-  // to their request immediately
-  if (this.peers[peerId]) {
-    this.peers[peerId].destroy()
+  // it is possible to see a peer we already knew about
+  var knownPeer = this.peers[peerId]
+  if (knownPeer) {
+    if (knownPeer.didConnect) {
+      // we may not have witnessed them disconnect before they re-requested
+      // if that happens we destroy them in the same tick and respond immediately
+      knownPeer.destroy()
+    } else {
+      // we may have timed out while trying to connect to somebody else
+      // if that happens we may have gotten a fresh list of requests
+      // that included this peer which we are still connecting to
+      return
+    }
   }
 
   debug(this.id + ' saw request by ' + peerId)
