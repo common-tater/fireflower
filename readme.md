@@ -33,13 +33,14 @@ var node = fireflower('tree-signals-url.firebaseio.com', {
   id: OPTIONAL_NODE_ID_TO_USE,
   ordered: OPTIONAL_BOOLEAN,    // defaults to true
   maxRetransmits: OPTIONAL_INT,
-  maxPacketLifeTime: OPTIONAL_TIME_IN_MS
+  maxPacketLifeTime: OPTIONAL_TIME_IN_MS,
+  shouldReportStatus: OPTIONAL_BOOLEAN    // defaults to false
 })
 ```
 
 ## API
-#### `node.connect(ShouldReportStatus)`
-Publish a request to join the tree. If disconnected, instances will republish their request to join. If the optional ShouldReportStatus bool is set to true, the node will report its status at an interval.
+#### `node.connect()`
+Publish a request to join the tree. If disconnected, instances will republish their request to join.
 
 #### `node.disconnect()`
 Disconnect and / or halt any attempts to reconnect.
@@ -62,6 +63,9 @@ Configuration data was read for the first time or updated.
 
 #### `node.emit('error', error)`
 A configuration error occurred.
+
+## Status Reporting
+Any node upon construction is able to opt-in to a reporting mechanism by setting the `shouldReportStatus` argument to true. That node will now report its status (id, upstream peer id, state, timestamp) into a "logs" node in the database. These status reports will happen at a set interval, in aggregation can give a better real-time picture of how the fireflower network tree is actually progressing.
 
 ## Note
 Just a prototype for the moment!
