@@ -52,15 +52,15 @@ function Node (url, opts) {
 
   this._interval = null
 
+  this._shouldReportStatus = this.opts.shouldReportStatus
   // when the connection state changes, update the log
   this.on('statechange', this.reportStatus.bind(this))
-
   this._interval = null
 
   events.EventEmitter.call(this)
 }
 
-Node.prototype.connect = function (shouldReportStatus) {
+Node.prototype.connect = function () {
   if (this.state !== 'disconnected') {
     throw new Error('invalid state for connect')
   }
@@ -70,7 +70,7 @@ Node.prototype.connect = function (shouldReportStatus) {
   // set the recurring logging that frequently posts our
   // known state of our world to firebase, so it can
   // be used to visualize the state of the tree
-  if (shouldReportStatus) {
+  if (this._shouldReportStatus) {
     this.reportStatus()
     this._interval = setInterval(this.reportStatus.bind(this),
     // TODO: change the next line to this when it works: process.env.PEER_REPORTING_INTERVAL)
