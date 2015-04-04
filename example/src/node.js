@@ -14,22 +14,21 @@ function NodeView (graph, model) {
   this.width = 30
   this.height = 30
 
-  this.el = hyperglue('<div class="node"><div id="circle"></div><div id="label"><div id="id"></div><div id="branch"></div></div></div>')
+  this.el = hyperglue('<div class="node"><div id="circle"></div><div id="label"></div></div>')
   this.el.querySelector('#circle').addEventListener('click', this.destroy.bind(this))
 }
 
 NodeView.prototype.render = function () {
   var self = this
   var ctx = this.graph.context
-  var upstream = this.graph.nodes[this.model.root && this.model.root.id]
+  var upstream = this.graph.nodes[this.model.upstream && this.model.upstream.id]
   var scale = isRetina ? 2 : 1
 
   hyperglue(this.el, {
     _attr: {
       'data-id': this.id
     },
-    '#label #id': this.id,
-    '#label #branch': this.model.branch
+    '#label': this.id
   })
 
   this.x = Math.min(this.x, this.graph.width)
