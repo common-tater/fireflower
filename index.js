@@ -20,27 +20,26 @@ function Node (url, opts) {
 
   this.url = url
   this.opts = opts || {}
-  this.id = this.opts.id
+  this.root = this.opts.root
   this.state = 'disconnected'
   this.config = {}
-  this.peers = {}
+  this.upstream = null
+  this.downstream = {}
 
   // firebase refs
   this._ref = new Firebase(this.url)
-  this._requestsRef = this._ref.child('requests')
   this._configRef = this._ref.child('configuration')
+  this._requestsRef = this._ref.child('requests')
 
-  // if we weren't assigned an id, get one from the db
-  this.id = this.id || this._requestsRef.push().key()
-
-  this._requestRef = this._requestsRef.child(this.id)
-  this._responsesRef = this._requestRef.child('responses')
+  // set a random id if one was not provided
+  this.id = this.opts.id || this._requestsRef.push().key()
 
   // bind callbacks
   this._onconfig = this._onconfig.bind(this)
   this._doconnect = this._doconnect.bind(this)
-  this._onresponse = this._onresponse.bind(this)
   this._onrequest = this._onrequest.bind(this)
+  this._onresponse = this._onresponse.bind(this)
+  this._onmaskupdate = this._onmaskupdate.bind(this)
 
   events.EventEmitter.call(this)
 }
@@ -50,7 +49,6 @@ Node.prototype.connect = function () {
     throw new Error('invalid state for connect')
   }
 
-  // make sure this is not set
   this._preventReconnect = false
 
   // change state -> requesting
@@ -65,7 +63,7 @@ Node.prototype.connect = function () {
   }
 
   // ensure required config info
-  if (!this.config.root || !this.config.K) {
+  if (!this.config.K) {
     this.once('configure', this._doconnect)
     return this
   }
@@ -78,27 +76,30 @@ Node.prototype.connect = function () {
 Node.prototype.disconnect = function () {
   this.state = 'disconnected'
   this._preventReconnect = true
+  this._watchingConfig = false
 
-  // teardown listeners
+  // remove some listeners
   this.removeListener('configure', this._doconnect)
   this._configRef.off('value', this._onconfig)
   this._requestsRef.off('child_added', this._onrequest)
-  this._responsesRef.off('child_added', this._onresponse)
 
-  // ensure request is removed
-  this._requestRef.remove()
-
-  // destroy upstream connection
-  this.root && this.root !== this && this.root.destroy()
-
-  // destroy downstream connections
-  for (var i in this.peers) {
-    this.peers[i].destroy()
+  // remove outstanding request / response listener
+  if (this._requestRef) {
+    this._requestRef.remove()
+    this._responsesRef.off('child_added', this._onresponse)
   }
 
-  this.root = null
-  this.peers = {}
-  this._watchingConfig = false
+  // destroy upstream connection
+  if (this.upstream) {
+    this.upstream.destroy()
+    this.upstream = null
+  }
+
+  // destroy downstream connections
+  for (var i in this.downstream) {
+    this.downstream[i].destroy()
+  }
+  this.downstream = {}
 
   return this
 }
@@ -113,13 +114,8 @@ Node.prototype._onconfig = function (snapshot) {
     return
   }
 
-  if (!data.K) {
+  if (!data.K || isNaN(data.K)) {
     this.emit('error', new Error('configuration did not supply valid value for K'))
-    return
-  }
-
-  if (!data.root) {
-    this.emit('error', new Error('configuration did not supply a valid root'))
     return
   }
 
@@ -131,10 +127,7 @@ Node.prototype._onconfig = function (snapshot) {
 Node.prototype._doconnect = function () {
   var self = this
 
-  // are we root?
-  if (this.id === this.config.root) {
-    this.root = this
-    this.branch = ''
+  if (this.root) {
 
     // emit connect but in nextTick
     setTimeout(function () {
@@ -153,32 +146,31 @@ Node.prototype._doconnect = function () {
     return
   }
 
-  // make sure we have a branch
-  this.branch = this.branch || this.id.slice(-5)
-
   // we are not root so publish a connection request
   this._dorequest()
+}
+
+Node.prototype._dorequest = function () {
+  var self = this
+
+  this._requestRef = this._requestsRef.push({
+    id: this.id,
+    removal_flag: {
+      removed: false
+    }
+  })
 
   // make sure no one removes our request until we're connected
-  this._requestRef.child('removal_flag').on('child_removed', function () {
+  this._requestRef.child('removal_flag').once('child_removed', function () {
     if (self.state === 'requesting') {
+      self._responsesRef.off('child_added', self._onresponse)
       self._dorequest()
     }
   })
 
-  // listen for responses
-  this._responsesRef.on('child_added', this._onresponse)
-}
-
-Node.prototype._dorequest = function () {
-  this._requestRef.update({
-    branch: this.branch,
-    removal_flag: {
-      removed: false
-    }
-  }, function (err) {
-    if (err) throw err // can this ever happen?
-  })
+  // listen for a response
+  this._responsesRef = this._requestRef.child('responses')
+  this._responsesRef.once('child_added', this._onresponse)
 }
 
 Node.prototype._onrequest = function (snapshot) {
@@ -186,43 +178,36 @@ Node.prototype._onrequest = function (snapshot) {
     return // can't respond to requests unless we are connected
   }
 
-  if (this.disabled) {
-    return // useful for debugging
-  }
-
-  if (Object.keys(this.peers).length >= this.config.K) {
+  if (Object.keys(this.downstream).length >= this.config.K) {
     return // can't respond to requests if we've hit K peers
   }
 
   var self = this
-  var request = snapshot.val()
   var requestRef = snapshot.ref()
-  var peerId = snapshot.key()
+  var requestId = snapshot.key()
+  var request = snapshot.val()
+  var peerId = request.id
 
   // responders may accidentally recreate requests
-  // these won't have a branch though and can be removed
-  if (!request.branch) {
+  // these won't have an id though and can be removed
+  if (!peerId) {
     requestRef.remove()
     return
   }
 
   // prevent circles
-  if (this.branch.slice(0, 5) === request.branch.slice(0, 5) &&
-      this.branch.length >= request.branch.length) {
+  if (peerId === this._mask) {
     return
   }
 
-  // it is possible to see a peer we already knew about
-  var knownPeer = this.peers[peerId]
+  // since we review requests after every connect / disconnect
+  // it is possible to see a peer we know about
+  var knownPeer = this.downstream[peerId]
   if (knownPeer) {
-    if (knownPeer.didConnect) {
-      // we may not have witnessed them disconnect before they re-requested
-      // if that happens we destroy them in the same tick and respond immediately
+    if (knownPeer.requestId !== requestId) {
+      // if request ids don't match, the peer must have disconnected without us noticing
       knownPeer.destroy()
     } else {
-      // we may have timed out while trying to connect to somebody else
-      // if that happens we may have gotten a fresh list of requests
-      // that included this peer which we are still connecting to
       return
     }
   }
@@ -235,16 +220,16 @@ Node.prototype._onrequest = function (snapshot) {
   // we have to do this before actually writing our response because
   // firebase can trigger events in the same tick which could circumvent
   // the K check at the top of this method
-  this._connectToPeer(peerId, true, responseRef)
+  this._connectToPeer(true, peerId, requestId, responseRef)
 
   // publish response
   responseRef.update({
-    branch: this.branch || '-'
+    id: this.id
   })
 
   // watch for request withdrawal
   responseRef.once('child_removed', function () {
-    var peer = self.peers[peerId]
+    var peer = self.downstream[peerId]
     if (peer && !peer.didConnect) {
       peer.requestWithdrawn = true
       peer.destroy()
@@ -257,38 +242,27 @@ Node.prototype._onresponse = function (snapshot) {
     return
   }
 
-  var response = snapshot.val()
   var responseRef = snapshot.ref()
-  var peerId = snapshot.key()
-  var branch = response.branch
+  var response = snapshot.val()
+  var peerId = response.id
 
-  if (!branch) {
+  if (!peerId) {
     return
-  } else if (branch === '-') {
-    branch = ''
   }
-
-  // TODO! prevent circles / allow proper healing
-  // using this.branch and request.branch
-  // this should be handled on the _onrequest side
-  // but decisions should be rechecked on this side too
 
   // change state -> connecting (this prevents accepting multiple responses)
   debug(this.id + ' got response from ' + peerId)
   this.state = 'connecting'
   this.emit('statechange')
 
-  // stop taking responses
-  // WARNING: no idea why, but calling off() can trigger additional
-  // events in the same tick so be sure to do it after changing state
-  this._responsesRef.off('child_added', this._onresponse)
+  // stop watching for request removal
   this._requestRef.child('removal_flag').off()
 
   // attempt a connection
-  this._connectToPeer(peerId, false, responseRef, branch)
+  this._connectToPeer(false, peerId, null, responseRef)
 }
 
-Node.prototype._connectToPeer = function (peerId, initiator, responseRef, branch) {
+Node.prototype._connectToPeer = function (initiator, peerId, requestId, responseRef) {
   var self = this
   var localSignals = responseRef.child(initiator ? 'responderSignals' : 'requesterSignals')
   var remoteSignals = responseRef.child(initiator ? 'requesterSignals' : 'responderSignals')
@@ -300,9 +274,19 @@ Node.prototype._connectToPeer = function (peerId, initiator, responseRef, branch
   peer.id = peerId
 
   if (initiator) {
-    this.peers[peer.id] = peer
+    this.downstream[peer.id] = peer
+    peer.notifications = peer._pc.createDataChannel('notifications')
+    peer.requestId = requestId
   } else {
-    peer.branch = branch
+    var oldondatachannel = peer._pc.ondatachannel
+    peer._pc.ondatachannel = function (evt) {
+      if (evt.channel.label === 'notifications') {
+        peer.notifications = evt.channel
+        peer.notifications.onmessage = self._onmaskupdate
+      } else {
+        oldondatachannel(evt)
+      }
+    }
   }
 
   peer.on('connect', this._onpeerConnect.bind(this, peer, remoteSignals))
@@ -342,7 +326,7 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   peer._channel.maxRetransmits = this.opts.maxRetransmits || null
   peer._channel.ordered = this.opts.ordered === false ? false : true
 
-  if (this.peers[peer.id]) {
+  if (this.downstream[peer.id]) {
     this._ondownstreamConnect(peer)
   } else {
     this._onupstreamConnect(peer)
@@ -353,7 +337,7 @@ Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
   peer.removeAllListeners()
   remoteSignals.off()
 
-  if (this.peers[peer.id]) {
+  if (this.downstream[peer.id]) {
     this._ondownstreamDisconnect(peer)
   } else {
     this._onupstreamDisconnect(peer)
@@ -366,28 +350,21 @@ Node.prototype._onupstreamConnect = function (peer) {
 
   // already got connected by someone else
   if (this.state === 'connected') {
+    debug(this.id + ' rejected upstream connection by ' + peer.id)
     peer.destroy()
     return
   }
 
-  // whoever just connected us is (as good as) root
-  this.root = peer
-
-  // update branch
-  this.branch = peer.branch + this.id.slice(-5)
+  this.upstream = peer
 
   // change state -> connected
-  debug(this.id + ' was connected by ' + peer.id)
+  debug(this.id + ' established upstream connection to ' + peer.id)
   this.state = 'connected'
   this.emit('statechange')
-
-  // emit connect
   this.emit('connect', peer)
 
-  // start responding to requests
-  if (Object.keys(this.peers).length < this.config.K) {
-    this._requestsRef.on('child_added', this._onrequest)
-  }
+  // begin responding to requests
+  this._reviewRequests()
 }
 
 Node.prototype._onupstreamDisconnect = function (peer) {
@@ -397,10 +374,13 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   // remove request
   this._requestRef.remove()
 
-  delete this.root
+  this.upstream = null
 
   // change state -> disconnected
-  debug(this.id + ' lost connection to ' + peer.id)
+  if (this.state !== 'disconnected') {
+    debug(this.id + ' lost upstream connection to ' + peer.id)
+  }
+
   this.state = 'disconnected'
   this.emit('statechange')
 
@@ -409,48 +389,77 @@ Node.prototype._onupstreamDisconnect = function (peer) {
     this.emit('disconnect', peer)
   }
 
-  // FIXME kill all downstream connections to ensure circles don't occur
-  for (var i in this.peers) {
-    this.peers[i].destroy()
-  }
-
   // attempt to reconnect if we were not disconnected intentionally
   if (!this._preventReconnect) {
-    this.connect()
+
+    // mask off our descendants
+    this._onmaskupdate({ data: this.id })
+
+    // give our mask update a tiny head start
+    var self = this
+    setTimeout(function () {
+      self.connect()
+    }, 100)
   }
 }
 
 Node.prototype._ondownstreamConnect = function (peer) {
   // emit peerconnect
-  debug(this.id + ' did connect peer ' + peer.id)
+  debug(this.id + ' established downstream connection to ' + peer.id)
   this.emit('peerconnect', peer)
 
   // stop responding to requests if peers > K
-  if (Object.keys(this.peers).length >= this.config.K) {
+  if (Object.keys(this.downstream).length >= this.config.K) {
     this._requestsRef.off('child_added', this._onrequest)
   }
 }
 
 Node.prototype._ondownstreamDisconnect = function (peer) {
   // remove from lookup
-  delete this.peers[peer.id]
+  delete this.downstream[peer.id]
 
   // emit events and potentially remove stale requests
   if (peer.didConnect) {
-    debug(this.id + ' lost connection to peer ' + peer.id)
+    if (this.state !== 'disconnected') {
+      debug(this.id + ' lost downstream connection to ' + peer.id)
+    }
+
     this.emit('peerdisconnect', peer)
   } else {
     if (peer.requestWithdrawn) {
       debug(this.id + ' saw request withdrawn by ' + peer.id)
     } else {
       debug(this.id + ' removing stale request by ' + peer.id)
-      this._requestsRef.child(peer.id).remove()
+      this._requestsRef.child(peer.requestId).remove()
     }
   }
 
-  // if we are connected but not currently taking requests
-  // and back below K, start accepting them again
-  if (this.state === 'connected' && Object.keys(this.peers).length < this.config.K) {
+  this._reviewRequests()
+}
+
+Node.prototype._onmaskupdate = function (evt) {
+  this._mask = evt.data
+
+  debug(this.id + ' set mask to ' + this._mask)
+
+  // oops we made a circle, fix that
+  if (this.downstream[this._mask]) {
+    debug(this.id + ' destroying accidental circle back to ' + this._mask)
+    this.downstream[this._mask].destroy()
+  }
+
+  for (var i in this.downstream) {
+    try {
+      this.downstream[i].notifications.send(this._mask)
+    } catch (err) {
+      // this would only happen if the peer was in
+      // the process of closing so we don't care
+    }
+  }
+}
+
+Node.prototype._reviewRequests = function () {
+  if (this.state === 'connected' && Object.keys(this.downstream).length < this.config.K) {
     this._requestsRef.off('child_added', this._onrequest)
     this._requestsRef.on('child_added', this._onrequest)
   }
