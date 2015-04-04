@@ -16,8 +16,7 @@ The following database structure must exist before the first node attempts to jo
 ```json
 {
   "configuration": {
-    "K": 3,
-    "root": "id-of-the-root-node"
+    "K": 3
   }
 }
 ```
@@ -30,10 +29,11 @@ var fireflower = require('fireflower')
 ## Constructor
 ```javascript
 var node = fireflower('tree-signals-url.firebaseio.com', {
-  id: OPTIONAL_NODE_ID_TO_USE,
-  ordered: OPTIONAL_BOOLEAN,    // defaults to true
-  maxRetransmits: OPTIONAL_INT,
-  maxPacketLifeTime: OPTIONAL_TIME_IN_MS
+  id: '0',                // string, optional
+  root: true,             // boolean, optional
+  ordered: true,          // boolean, optional, defaults to true
+  maxRetransmits: 3,      // integer, optional, defaults to null
+  maxPacketLifeTime: 500  // integer, optional, defaults to null (mutually exclusive with maxRetransmits)
 })
 ```
 
