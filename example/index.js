@@ -4,6 +4,7 @@ var Graph = require('./src/graph')
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 window.root = fireflower('fireflower.firebaseio.com', { root: true })
 window.root.connect()
 =======
@@ -18,6 +19,10 @@ window.root.connect(true)
 window.root = fireflower('fireflower-dev.firebaseio.com', { id: '0' })
 window.root.connect(true)
 >>>>>>> stub for reporting status every 5 seconds if the node opts in
+=======
+window.root = fireflower('fireflower-dev.firebaseio.com', { id: '0' })
+window.root.connect(true)
+>>>>>>> 5635abd521ff61c8b47e68ab2748bad3999276f3
 
 window.root.once('connect', function () {
   window.graph = new Graph('fireflower-dev.firebaseio.com', window.root)

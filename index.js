@@ -57,6 +57,11 @@ function Node (url, opts) {
   this.on('statechange', this.reportStatus.bind(this))
   this._interval = null
 
+  this._shouldReportStatus = this.opts.shouldReportStatus
+  // when the connection state changes, update the log
+  this.on('statechange', this.reportStatus.bind(this))
+  this._interval = null
+
   events.EventEmitter.call(this)
 }
 
@@ -103,6 +108,9 @@ Node.prototype.disconnect = function () {
   this.state = 'disconnected'
   this._preventReconnect = true
   this._watchingConfig = false
+
+  // stop any reporting that may have been happening
+  clearInterval(this._interval)
 
   // stop any reporting that may have been happening
   clearInterval(this._interval)
