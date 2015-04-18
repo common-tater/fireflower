@@ -44,23 +44,8 @@ function Node (url, opts) {
 
   // when the connection state changes, update the log
   this.on('statechange', this.reportStatus.bind(this))
-
   this._interval = null
-
-  // when the connection state changes, update the log
-  this.on('statechange', this.reportStatus.bind(this))
-
-  this._interval = null
-
   this._shouldReportStatus = this.opts.shouldReportStatus
-  // when the connection state changes, update the log
-  this.on('statechange', this.reportStatus.bind(this))
-  this._interval = null
-
-  this._shouldReportStatus = this.opts.shouldReportStatus
-  // when the connection state changes, update the log
-  this.on('statechange', this.reportStatus.bind(this))
-  this._interval = null
 
   events.EventEmitter.call(this)
 }
@@ -108,15 +93,6 @@ Node.prototype.disconnect = function () {
   this.state = 'disconnected'
   this._preventReconnect = true
   this._watchingConfig = false
-
-  // stop any reporting that may have been happening
-  clearInterval(this._interval)
-
-  // stop any reporting that may have been happening
-  clearInterval(this._interval)
-
-  // stop any reporting that may have been happening
-  clearInterval(this._interval)
 
   // stop any reporting that may have been happening
   clearInterval(this._interval)
@@ -505,50 +481,6 @@ Node.prototype._reviewRequests = function () {
   if (this.state === 'connected' && Object.keys(this.downstream).length < this.config.K) {
     this._requestsRef.off('child_added', this._onrequest)
     this._requestsRef.on('child_added', this._onrequest)
-  }
-}
-
-Node.prototype.reportStatus = function () {
-  var nodeStatus = generateNodeStatusObject.call(this)
-  this._logsRef.child(this.id).update(nodeStatus)
-}
-
-function generateNodeStatusObject () {
-  var upstreamPeerId = null
-  if (this.root && this.root.id) {
-    upstreamPeerId = this.root.id
-  }
-  // the root will have its upstreamPeerId set as itself, but
-  // that's a signal that it's the root, not that it's a node
-  // who hasn't found an upstream peer yet
-
-  return {
-    id: this.id,
-    upstream_peer_id: upstreamPeerId,
-    state: this.state,
-    timestamp: new Date().getTime()
-  }
-}
-
-Node.prototype.reportStatus = function () {
-  var nodeStatus = generateNodeStatusObject.call(this)
-  this._logsRef.child(this.id).update(nodeStatus)
-}
-
-function generateNodeStatusObject () {
-  var upstreamPeerId = null
-  if (this.root && this.root.id) {
-    upstreamPeerId = this.root.id
-  }
-  // the root will have its upstreamPeerId set as itself, but
-  // that's a signal that it's the root, not that it's a node
-  // who hasn't found an upstream peer yet
-
-  return {
-    id: this.id,
-    upstream_peer_id: upstreamPeerId,
-    state: this.state,
-    timestamp: new Date().getTime()
   }
 }
 

@@ -33,7 +33,7 @@ var node = fireflower('tree-signals-url.firebaseio.com', {
   root: true,                // boolean, optional
   ordered: true,             // boolean, optional, defaults to true
   maxRetransmits: 3,         // integer, optional, defaults to null
-  maxPacketLifeTime: 500     // integer, optional, defaults to null (mutually exclusive with maxRetransmits)
+  maxPacketLifeTime: 500,    // integer, optional, defaults to null (mutually exclusive with maxRetransmits)
   shouldReportStatus: true   // boolean, optional, defaults to false
 })
 ```
