@@ -398,7 +398,9 @@ Node.prototype._onupstreamDisconnect = function (peer) {
     // give our mask update a tiny head start
     var self = this
     setTimeout(function () {
-      self.connect()
+      if (!self._preventReconnect) {
+        self.connect()
+      }
     }, 100)
   }
 }
