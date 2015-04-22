@@ -21,6 +21,7 @@ function Node (url, opts) {
   this.url = url
   this.opts = opts || {}
   this.root = this.opts.root
+  this.reportInterval = this.opts.reportInterval
   this.state = 'disconnected'
   this.config = {}
   this.upstream = null
@@ -30,6 +31,7 @@ function Node (url, opts) {
   this._ref = new Firebase(this.url)
   this._configRef = this._ref.child('configuration')
   this._requestsRef = this._ref.child('requests')
+  this._reports = this._ref.child('reports')
 
   // set a random id if one was not provided
   this.id = this.opts.id || this._requestsRef.push().key()
@@ -40,6 +42,7 @@ function Node (url, opts) {
   this._onrequest = this._onrequest.bind(this)
   this._onresponse = this._onresponse.bind(this)
   this._onmaskupdate = this._onmaskupdate.bind(this)
+  this._onreportNeeded = this._onreportNeeded.bind(this)
 
   events.EventEmitter.call(this)
 }
@@ -50,6 +53,12 @@ Node.prototype.connect = function () {
   }
 
   this._preventReconnect = false
+
+  // reporting?
+  if (this.reportInterval && !this._reportInterval) {
+    this._reportInterval = setInterval(this._onreportNeeded, this.reportInterval)
+    this._onreportNeeded()
+  }
 
   // change state -> requesting
   debug(this.id + ' requesting connection')
@@ -82,6 +91,10 @@ Node.prototype.disconnect = function () {
   this.removeListener('configure', this._doconnect)
   this._configRef.off('value', this._onconfig)
   this._requestsRef.off('child_added', this._onrequest)
+
+  // stop reporting
+  clearInterval(this._reportInterval)
+  delete this._reportInterval
 
   // remove outstanding request / response listener
   if (this._requestRef) {
@@ -458,6 +471,20 @@ Node.prototype._onmaskupdate = function (evt) {
       // the process of closing so we don't care
     }
   }
+}
+
+Node.prototype._onreportNeeded = function () {
+  debug(this.id + ' reporting')
+
+  var report = {
+    state: this.state,
+    upstream: this.upstream ? this.upstream.id : null,
+    timestamp: Date.now()
+  }
+
+  this._reports
+    .child(this.id)
+    .update(report)
 }
 
 Node.prototype._reviewRequests = function () {
