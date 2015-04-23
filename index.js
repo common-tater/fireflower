@@ -9,7 +9,7 @@ var inherits = require('inherits')
 var SimplePeer = require('simple-peer')
 var Firebase = null
 
-var CONNECTION_TIMEOUT = 2000
+var CONNECTION_TIMEOUT = 5000
 
 inherits(Node, events.EventEmitter)
 
