@@ -482,6 +482,10 @@ Node.prototype._onreportNeeded = function () {
     timestamp: Date.now()
   }
 
+  if (this.root) {
+    report.root = true
+  }
+
   this._reports
     .child(this.id)
     .update(report)
