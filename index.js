@@ -474,8 +474,6 @@ Node.prototype._onmaskupdate = function (evt) {
 }
 
 Node.prototype._onreportNeeded = function () {
-  debug(this.id + ' reporting')
-
   var report = {
     state: this.state,
     upstream: this.upstream ? this.upstream.id : null,
