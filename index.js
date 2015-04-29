@@ -479,7 +479,7 @@ Node.prototype._onreportNeeded = function () {
   var report = {
     state: this.state,
     upstream: this.upstream ? this.upstream.id : null,
-    timestamp: Date.now()
+    timestamp: Firebase.ServerValue.TIMESTAMP
   }
 
   if (this.root) {
