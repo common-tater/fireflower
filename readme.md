@@ -28,13 +28,32 @@ var fireflower = require('fireflower')
 
 ## Constructor
 ```javascript
-var node = fireflower('tree-signals-url.firebaseio.com', {
-  id: '0',                // string, optional
-  root: true,             // boolean, optional
-  ordered: true,          // boolean, optional, defaults to true
-  maxRetransmits: 3,      // integer, optional, defaults to null
-  maxPacketLifeTime: 500  // integer, optional, defaults to null (mutually exclusive with maxRetransmits)
-})
+var node = fireflower('tree-signals-url.firebaseio.com' [, opts])
+```
+
+Where `opts` can be:
+```javascript
+{
+  id: '0',                            // string, optional
+  root: true,                         // boolean, optional, indicates that you want to be the root node
+  reportInterval: 5000,               // int, optional, generate perodic status reports
+  peerConfig: {                       // object, optional, standard RTCPeerConnection constructor options
+    iceServers: [
+      {
+        url: 'stun:23.21.150.121'
+      }, {
+        url: 'turn:global.turn.twilio.com:1234?transport=udp',
+        username: 'xxx',
+        credential: 'yyy'
+      }
+    ]
+  },
+  channelConfig: {                    // object, optional, standard RTCDataChannel properties
+    ordered: true,
+    maxRetransmits: 3,
+    maxPacketLifeTime: 500
+  }
+}
 ```
 
 ## API
