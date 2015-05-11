@@ -40,7 +40,7 @@ NodeView.prototype.render = function () {
     ctx.beginPath()
     ctx.moveTo(upstream.x * scale, upstream.y * scale)
     ctx.lineTo(self.x * scale, self.y * scale)
-    ctx.lineWidth = 4
+    ctx.lineWidth = 2 * window.devicePixelRatio
     ctx.lineCap = 'round'
     ctx.strokeStyle = 'rgba(104, 104, 104, 0.5)'
     ctx.stroke()

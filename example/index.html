@@ -2,89 +2,20 @@
 <html>
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, minimal-ui">
     <title>fireflower</title>
-    <style>
-      * {
-        box-sizing: border-box;
-      }
-      html,
-      body {
-        height: 100%;
-        margin: 0;
-        padding: 0;
-        position: relative;
-        font-family: monospace;
-        color: #444;
-      }
-      #logo {
-        position: fixed;
-        top: 36px;
-        left: 36px;
-        font-size: 28px;
-      }
-      .graph {
-        position: absolute;
-        width: 100%;
-        height: 100%;
-      }
-      .graph canvas {
-        width: 100%;
-        height: 100%;
-        position: absolute;
-        top: 0;
-        left: 0;
-      }
-      .graph .nodes {
-        width: 100%;
-        height: 100%;
-        position: absolute;
-        top: 0;
-        left: 0;
-        overflow: hidden;
-      }
-      .graph .nodes .node {
-        position: absolute;
-        transform: translate3d(-50%, -15px, 0);
-      }
-      .graph .nodes .node.root {
-        transform: translate3d(-50%, -23px, 0);
-      }
-      .graph .nodes .node #circle {
-        display: table;
-        margin: auto;
-        background-color: rgba(195, 195, 195, 0.5);
-        border: 2px solid rgba(135, 135, 135, 0.5);
-        border-radius: 15px;
-        cursor: pointer;
-        position: relative;
-        width: 30px;
-        height: 30px;
-      }
-      .graph .nodes .node.root #circle {
-        background-color: rgba(255, 238, 68, 0.5);
-        border: 2px solid rgba(155, 138, 68, 0.9);
-        border-radius: 23px;
-        cursor: auto;
-        width: 46px;
-        height: 46px;
-      }
-      .graph .nodes .node #label {
-        position: relative;
-        letter-spacing: 1px;
-        margin-top: 10px;
-        color: #666;
-        pointer-events: none;
-        text-align: center;
-        font-size: 12px;
-      }
-    </style>
+    <link rel="stylesheet" href="/style.css">
   </head>
   <body>
-    <div class="graph">
+    <div id="graph">
       <canvas></canvas>
-      <div class="nodes"></div>
+      <div id="nodes"></div>
     </div>
-    <script type="text/javascript" src="build.js"></script>
     <div id="logo">fireflower</div>
+    <label id="k-number">
+      <span>K = </span>
+      <input type="number" value="2" min="1">
+    </label>
+    <script type="text/javascript" src="build.js"></script>
   </body>
 </html>

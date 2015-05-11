@@ -6,8 +6,8 @@ var isRetina = window.devicePixelRatio > 1
 
 function GraphView (url, root) {
   this.url = url
-  this.el = document.querySelector('.graph')
-  this.nodesEl = this.el.querySelector('.nodes')
+  this.el = document.querySelector('#graph')
+  this.nodesEl = this.el.querySelector('#nodes')
   this.canvas = this.el.querySelector('canvas')
   this.context = this.canvas.getContext('2d')
   this.nodes = {}
