@@ -466,11 +466,9 @@ Node.prototype._onmaskupdate = function (evt) {
   }
 
   for (var i in this.downstream) {
-    try {
-      this.downstream[i].notifications.send(this._mask)
-    } catch (err) {
-      // this would only happen if the peer was in
-      // the process of closing so we don't care
+    var notifications = this.downstream[i].notifications
+    if (notifications.readyState === 'open') {
+      notifications.send(this._mask)
     }
   }
 }
