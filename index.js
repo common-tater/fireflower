@@ -22,7 +22,6 @@ function Node (url, opts) {
   this.opts = opts || {}
   this.root = this.opts.root
   this.reportInterval = this.opts.reportInterval
-  this.channelConfig = this.opts.channelConfig || {}
   this.config = {}
   this.state = 'disconnected'
   this.upstream = null
@@ -283,7 +282,8 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
 
   var peer = new SimplePeer({
     initiator: initiator,
-    config: this.opts.peerConfig
+    config: this.opts.peerConfig,
+    channelConfig: this.opts.channelConfig
   })
 
   peer.id = peerId
@@ -336,10 +336,6 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   peer.removeAllListeners('connect')
   peer.removeAllListeners('signal')
   remoteSignals.off()
-
-  peer._channel.maxPacketLifeTime = this.channelConfig.maxPacketLifeTime || null
-  peer._channel.maxRetransmits = this.channelConfig.maxRetransmits || null
-  peer._channel.ordered = this.channelConfig.ordered === false ? false : true
 
   if (this.downstream[peer.id]) {
     this._ondownstreamConnect(peer)
