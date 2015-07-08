@@ -431,7 +431,7 @@ Node.prototype._ondownstreamConnect = function (peer) {
   }
 
   // make sure downstream has the most up to date mask
-  if (peer.notifications.readyState === 'open') {
+  if (this._mask && peer.notifications.readyState === 'open') {
     peer.notifications.send(this._mask)
   }
 }
