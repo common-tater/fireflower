@@ -429,6 +429,11 @@ Node.prototype._ondownstreamConnect = function (peer) {
   if (Object.keys(this.downstream).length >= this.config.K) {
     this._requestsRef.off('child_added', this._onrequest)
   }
+
+  // make sure downstream has the most up to date mask
+  if (this._mask && peer.notifications.readyState === 'open') {
+    peer.notifications.send(this._mask)
+  }
 }
 
 Node.prototype._ondownstreamDisconnect = function (peer) {
