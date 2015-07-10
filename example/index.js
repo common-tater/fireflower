@@ -10,24 +10,15 @@ var db = new Firebase(dburl)
 var knumber = document.querySelector('#k-number input')
 knumber.addEventListener('change', onkchanged)
 
-onkchanged(function () {
-  window.root = fireflower(dburl, { root: true })
-  window.root.connect()
+window.root = fireflower(dburl, { root: true })
+window.root.connect()
 
-  window.root.once('connect', function () {
-    window.graph = new Graph(dburl, window.root)
-    window.graph.render()
-  })
+window.root.once('connect', function () {
+  window.graph = new Graph(dburl, window.root)
+  onkchanged()
 })
 
-function onkchanged (cb) {
-  if (typeof cb !== 'function') {
-    cb = undefined
-  }
-
-  db.update({
-    configuration: {
-      K: knumber.value
-    }
-  }, cb)
+function onkchanged () {
+  window.graph.K = parseInt(knumber.value)
+  window.graph.render()
 }
