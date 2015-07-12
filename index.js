@@ -55,10 +55,14 @@ Object.defineProperty(Node.prototype, 'K', {
     return this.opts.K
   },
   set: function (value) {
+    if (value === this.opts.K) return
     if (isNaN(value) || ~~value !== value || value < 0) {
       throw new Error('K must be 0 or a positive integer')
     }
+
+    debug(this.id + ' set K to ' + value)
     this.opts.K = value
+
     var n = 0
     for (var i in this.downstream) {
       if (++n > this.opts.K) {
