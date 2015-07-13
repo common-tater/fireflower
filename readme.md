@@ -11,16 +11,6 @@ Scalable broadcasting for streams of live data.
 ## Example
 `npm run example`
 
-## Prerequisite
-The following database structure must exist before the first node attempts to join:
-```json
-{
-  "configuration": {
-    "K": 3
-  }
-}
-```
-
 ## Require
 ```javascript
 var fireflower = require('fireflower')

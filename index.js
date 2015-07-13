@@ -4,9 +4,11 @@ module.exports = function (_Firebase) {
 }
 
 var debug = require('debug')('fireflower')
+var merge = require('merge').recursive
 var events = require('events')
 var inherits = require('inherits')
 var SimplePeer = require('simple-peer')
+var Blacklist = require('./blacklist')
 var Firebase = null
 
 var CONNECTION_TIMEOUT = 5000
@@ -22,10 +24,10 @@ function Node (url, opts) {
   this.opts = opts || {}
   this.root = this.opts.root
   this.reportInterval = this.opts.reportInterval
-  this.config = {}
   this.state = 'disconnected'
   this.upstream = null
   this.downstream = {}
+  this.blacklist = new Blacklist()
 
   // firebase refs
   this._ref = new Firebase(this.url)
@@ -35,6 +37,9 @@ function Node (url, opts) {
 
   // set a random id if one was not provided
   this.id = this.opts.id || this._requestsRef.push().key()
+
+  // ensure K
+  this.K = this.K || 0
 
   // bind callbacks
   this._onconfig = this._onconfig.bind(this)
@@ -46,6 +51,29 @@ function Node (url, opts) {
 
   events.EventEmitter.call(this)
 }
+
+Object.defineProperty(Node.prototype, 'K', {
+  get: function () {
+    return this.opts.K
+  },
+  set: function (value) {
+    if (value === this.opts.K) return
+    if (isNaN(value) || ~~value !== value || value < 0) {
+      throw new Error('K must be 0 or a positive integer')
+    }
+
+    debug(this.id + ' set K to ' + value)
+    this.opts.K = value
+
+    var n = 0
+    for (var i in this.downstream) {
+      if (++n > this.opts.K) {
+        this.downstream[i].destroy()
+      }
+    }
+    this._reviewRequests()
+  }
+})
 
 Node.prototype.connect = function () {
   if (this.state !== 'disconnected') {
@@ -69,12 +97,6 @@ Node.prototype.connect = function () {
   if (!this._watchingConfig) {
     this._configRef.on('value', this._onconfig)
     this._watchingConfig = true
-  }
-
-  // ensure required config info
-  if (!this.config.K) {
-    this.once('configure', this._doconnect)
-    return this
   }
 
   this._doconnect()
@@ -121,18 +143,7 @@ Node.prototype.disconnect = function () {
 
 Node.prototype._onconfig = function (snapshot) {
   var data = snapshot.val()
-
-  if (!data) {
-    this.emit('error', new Error('missing configuration'))
-    return
-  }
-
-  if (!data.K || isNaN(data.K)) {
-    this.emit('error', new Error('configuration did not supply valid value for K'))
-    return
-  }
-
-  this.config = data
+  merge(this.opts, data)
   debug(this.id + ' updated configuration')
   this.emit('configure')
 }
@@ -191,7 +202,7 @@ Node.prototype._onrequest = function (snapshot) {
     return // can't respond to requests unless we are connected
   }
 
-  if (Object.keys(this.downstream).length >= this.config.K) {
+  if (Object.keys(this.downstream).length >= this.opts.K) {
     return // can't respond to requests if we've hit K peers
   }
 
@@ -259,7 +270,7 @@ Node.prototype._onresponse = function (snapshot) {
   var response = snapshot.val()
   var peerId = response.id
 
-  if (!peerId) {
+  if (!peerId || this.blacklist.contains(peerId)) {
     return
   }
 
@@ -283,7 +294,8 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   var peer = new SimplePeer({
     initiator: initiator,
     config: this.opts.peerConfig,
-    channelConfig: this.opts.channelConfig
+    channelConfig: this.opts.channelConfig,
+    channelName: 'default'
   })
 
   peer.id = peerId
@@ -295,11 +307,11 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   } else {
     var oldondatachannel = peer._pc.ondatachannel
     peer._pc.ondatachannel = function (evt) {
-      if (evt.channel.label === 'notifications') {
+      if (evt.channel.label === 'default') {
+        oldondatachannel(evt)
+      } else if (evt.channel.label === 'notifications') {
         peer.notifications = evt.channel
         peer.notifications.onmessage = self._onmaskupdate
-      } else {
-        oldondatachannel(evt)
       }
     }
   }
@@ -422,7 +434,7 @@ Node.prototype._ondownstreamConnect = function (peer) {
   this.emit('peerconnect', peer)
 
   // stop responding to requests if peers > K
-  if (Object.keys(this.downstream).length >= this.config.K) {
+  if (Object.keys(this.downstream).length >= this.opts.K) {
     this._requestsRef.off('child_added', this._onrequest)
   }
 
@@ -491,7 +503,7 @@ Node.prototype._onreportNeeded = function () {
 }
 
 Node.prototype._reviewRequests = function () {
-  if (this.state === 'connected' && Object.keys(this.downstream).length < this.config.K) {
+  if (this.state === 'connected' && Object.keys(this.downstream).length < this.opts.K) {
     this._requestsRef.off('child_added', this._onrequest)
     this._requestsRef.on('child_added', this._onrequest)
   }

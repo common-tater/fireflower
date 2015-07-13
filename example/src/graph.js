@@ -38,6 +38,7 @@ GraphView.prototype.render = function () {
 
   for (var i in this.nodes) {
     var node = this.nodes[i]
+    node.model.K = this.K
 
     if (!node.el.parentNode) {
       this.nodesEl.appendChild(node.el)
