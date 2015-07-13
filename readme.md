@@ -9,7 +9,15 @@ Scalable broadcasting for streams of live data.
 * [Firebase](https://www.firebase.com) for `RTCPeerConnection` signaling.
 
 ## Example
-`npm run example`
+```
+$ npm run example
+```
+
+## Test
+```
+$ npm run test
+```
+There aren't any real tests yet (coming soon though!), for now this just runs standard.
 
 ## Require
 ```javascript
@@ -46,12 +54,16 @@ Where `opts` can be:
 }
 ```
 
-## API
+## Methods
 #### `node.connect()`
 Publish a request to join the tree. If disconnected, instances will republish their request to join.
 
 #### `node.disconnect()`
 Disconnect and / or halt any attempts to reconnect.
+
+#### `node.blacklist.add(id)`
+#### `node.blacklist.remove([id])`
+#### `node.blacklist.contains(id)`
 
 ## Events
 #### `node.emit('connect', SimplePeerInstance)`

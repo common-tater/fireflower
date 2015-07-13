@@ -1,12 +1,10 @@
-localStorage.debug = 'fireflower'
+window.localStorage.debug = 'fireflower'
 
 var Firebase = require('firebase')
 var fireflower = require('../')(Firebase)
 var Graph = require('./src/graph')
 
 var dburl = 'fireflower.firebaseio.com'
-var db = new Firebase(dburl)
-
 var knumber = document.querySelector('#k-number input')
 knumber.addEventListener('change', onkchanged)
 
@@ -19,6 +17,6 @@ window.root.once('connect', function () {
 })
 
 function onkchanged () {
-  window.graph.K = parseInt(knumber.value)
+  window.graph.K = parseInt(knumber.value, 10)
   window.graph.render()
 }

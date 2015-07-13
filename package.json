@@ -18,7 +18,7 @@
   },
   "scripts": {
     "example": "browserify example > example/build.js && node example/server.js",
-    "test": "node test"
+    "test": "standard"
   },
   "repository": "https://github.com/common-tater/fireflower",
   "author": "Danny Bauman <dannybauman@gmail.com>"
