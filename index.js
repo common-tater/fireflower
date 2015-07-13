@@ -292,7 +292,8 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   var peer = new SimplePeer({
     initiator: initiator,
     config: this.opts.peerConfig,
-    channelConfig: this.opts.channelConfig
+    channelConfig: this.opts.channelConfig,
+    channelName: 'default'
   })
 
   peer.id = peerId
@@ -304,11 +305,11 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   } else {
     var oldondatachannel = peer._pc.ondatachannel
     peer._pc.ondatachannel = function (evt) {
-      if (evt.channel.label === 'notifications') {
+      if (evt.channel.label === 'default') {
+        oldondatachannel(evt)
+      } else if (evt.channel.label === 'notifications') {
         peer.notifications = evt.channel
         peer.notifications.onmessage = self._onmaskupdate
-      } else {
-        oldondatachannel(evt)
       }
     }
   }
