@@ -8,6 +8,7 @@ var merge = require('merge').recursive
 var events = require('events')
 var inherits = require('inherits')
 var SimplePeer = require('simple-peer')
+var Blacklist = require('./blacklist')
 var Firebase = null
 
 var CONNECTION_TIMEOUT = 5000
@@ -26,6 +27,7 @@ function Node (url, opts) {
   this.state = 'disconnected'
   this.upstream = null
   this.downstream = {}
+  this.blacklist = new Blacklist()
 
   // firebase refs
   this._ref = new Firebase(this.url)
@@ -268,7 +270,7 @@ Node.prototype._onresponse = function (snapshot) {
   var response = snapshot.val()
   var peerId = response.id
 
-  if (!peerId) {
+  if (!peerId || this.blacklist.contains(peerId)) {
     return
   }
 
