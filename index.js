@@ -439,8 +439,12 @@ Node.prototype._ondownstreamConnect = function (peer) {
   }
 
   // make sure downstream has the most up to date mask
-  if (this._mask && peer.notifications.readyState === 'open') {
-    peer.notifications.send(this._mask)
+  if (this._mask) {
+    try {
+      peer.notifications.send(this._mask)
+    } catch (err) {
+      console.warn(err)
+    }
   }
 }
 
@@ -480,8 +484,10 @@ Node.prototype._onmaskupdate = function (evt) {
 
   for (var i in this.downstream) {
     var notifications = this.downstream[i].notifications
-    if (notifications.readyState === 'open') {
+    try {
       notifications.send(this._mask)
+    } catch (err) {
+      console.warn(err)
     }
   }
 }
