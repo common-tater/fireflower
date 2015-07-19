@@ -507,7 +507,9 @@ Node.prototype._onreportNeeded = function () {
     .child(this.id)
     .update(report)
 
-  this._reportInterval = setTimeout(this._onreportNeeded, this.reportInterval)
+  if (this._reportInterval) {
+    this._reportInterval = setTimeout(this._onreportNeeded, this.reportInterval)
+  }
 }
 
 Node.prototype._reviewRequests = function () {
