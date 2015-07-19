@@ -84,7 +84,7 @@ Node.prototype.connect = function () {
 
   // reporting?
   if (this.reportInterval && !this._reportInterval) {
-    this._reportInterval = setInterval(this._onreportNeeded, this.reportInterval)
+    this._reportInterval = setTimeout(this._onreportNeeded, this.reportInterval)
     this._onreportNeeded()
   }
 
@@ -115,7 +115,7 @@ Node.prototype.disconnect = function () {
   this._requestsRef.off('child_added', this._onrequest)
 
   // stop reporting
-  clearInterval(this._reportInterval)
+  clearTimeout(this._reportInterval)
   delete this._reportInterval
 
   // remove outstanding request / response listener
@@ -506,6 +506,8 @@ Node.prototype._onreportNeeded = function () {
   this._reports
     .child(this.id)
     .update(report)
+
+  this._reportInterval = setTimeout(this._onreportNeeded, this.reportInterval)
 }
 
 Node.prototype._reviewRequests = function () {
