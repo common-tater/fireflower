@@ -7,7 +7,7 @@ var debug = require('debug')('fireflower')
 var merge = require('merge').recursive
 var events = require('events')
 var inherits = require('inherits')
-var SimplePeer = require('simple-peer')
+var SimplePeer = require('simpler-peer')
 var Blacklist = require('./blacklist')
 var Firebase = null
 
@@ -68,7 +68,7 @@ Object.defineProperty(Node.prototype, 'K', {
     var n = 0
     for (var i in this.downstream) {
       if (++n > this.opts.K) {
-        this.downstream[i].destroy()
+        this.downstream[i].close()
       }
     }
     this._reviewRequests()
@@ -124,15 +124,15 @@ Node.prototype.disconnect = function () {
     this._responsesRef.off('child_added', this._onresponse)
   }
 
-  // destroy upstream connection
+  // close upstream connection
   if (this.upstream) {
-    this.upstream.destroy()
+    this.upstream.close()
     this.upstream = null
   }
 
-  // destroy downstream connections
+  // close downstream connections
   for (var i in this.downstream) {
-    this.downstream[i].destroy()
+    this.downstream[i].close()
   }
   this.downstream = {}
 
@@ -230,7 +230,7 @@ Node.prototype._onrequest = function (snapshot) {
   if (knownPeer) {
     if (knownPeer.requestId !== requestId) {
       // if request ids don't match, the peer must have disconnected without us noticing
-      knownPeer.destroy()
+      knownPeer.close()
     } else {
       return
     }
@@ -256,7 +256,7 @@ Node.prototype._onrequest = function (snapshot) {
     var peer = self.downstream[peerId]
     if (peer && !peer.didConnect) {
       peer.requestWithdrawn = true
-      peer.destroy()
+      peer.close()
     }
   })
 }
@@ -294,26 +294,22 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   var peer = new SimplePeer({
     initiator: initiator,
     config: this.opts.peerConfig,
-    channelConfig: this.opts.channelConfig,
-    channelName: 'default'
+    channelConfig: this.opts.channelConfig
   })
 
   peer.id = peerId
 
   if (initiator) {
     this.downstream[peer.id] = peer
-    peer.notifications = peer._pc.createDataChannel('notifications')
+    peer.notifications = peer.createDataChannel('notifications')
     peer.requestId = requestId
   } else {
-    var oldondatachannel = peer._pc.ondatachannel
-    peer._pc.ondatachannel = function (evt) {
-      if (evt.channel.label === 'default') {
-        oldondatachannel(evt)
-      } else if (evt.channel.label === 'notifications') {
-        peer.notifications = evt.channel
-        peer.notifications.onmessage = self._onmaskupdate
+    peer.on('datachannel', function (channel) {
+      if (channel.label === 'notifications') {
+        peer.notifications = channel
+        peer.notifications.on('message', self._onmaskupdate)
       }
-    }
+    })
   }
 
   peer.on('connect', this._onpeerConnect.bind(this, peer, remoteSignals))
@@ -338,7 +334,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   // timeout connections
   setTimeout(function () {
     if (!peer.didConnect) {
-      peer.destroy()
+      peer.close()
     }
   }, CONNECTION_TIMEOUT)
 }
@@ -374,7 +370,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   // already got connected by someone else
   if (this.state === 'connected') {
     debug(this.id + ' rejected upstream connection by ' + peer.id)
-    peer.destroy()
+    peer.close()
     return
   }
 
@@ -479,7 +475,7 @@ Node.prototype._onmaskupdate = function (evt) {
   // oops we made a circle, fix that
   if (this.downstream[this._mask]) {
     debug(this.id + ' destroying accidental circle back to ' + this._mask)
-    this.downstream[this._mask].destroy()
+    this.downstream[this._mask].close()
   }
 
   for (var i in this.downstream) {
