@@ -293,6 +293,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
 
   var peer = new SimplePeer({
     initiator: initiator,
+    trickle: this.opts.peerConfig ? this.opts.peerConfig.trickle : undefined,
     config: this.opts.peerConfig,
     channelConfig: this.opts.channelConfig
   })
