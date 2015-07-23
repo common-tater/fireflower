@@ -7,7 +7,7 @@
     "debug": "2.1.3",
     "inherits": "2.0.1",
     "merge": "1.2.0",
-    "simpler-peer": "common-tater/simpler-peer#1.0.1"
+    "simpler-peer": "common-tater/simpler-peer#1.1.0"
   },
   "devDependencies": {
     "browserify": "8.1.3",
