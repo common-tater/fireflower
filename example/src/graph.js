@@ -49,7 +49,7 @@ GraphView.prototype.render = function () {
 }
 
 GraphView.prototype.add = function () {
-  var model = fireflower(this.url).connect()
+  var model = fireflower(this.url, { reportInterval: 2500 }).connect()
   var node = new NodeView(this, model)
   this.nodes[node.id] = node
   return node

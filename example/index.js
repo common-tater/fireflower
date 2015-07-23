@@ -8,7 +8,7 @@ var dburl = 'fireflower.firebaseio.com'
 var knumber = document.querySelector('#k-number input')
 knumber.addEventListener('change', onkchanged)
 
-window.root = fireflower(dburl, { root: true })
+window.root = fireflower(dburl, { root: true, reportInterval: 2500 })
 window.root.connect()
 
 window.root.once('connect', function () {
