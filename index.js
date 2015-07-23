@@ -193,8 +193,9 @@ Node.prototype._dorequest = function () {
   })
 
   // listen for a response
+  delete this._responses
   this._responsesRef = this._requestRef.child('responses')
-  this._responsesRef.once('child_added', this._onresponse)
+  this._responsesRef.on('child_added', this._onresponse)
 }
 
 Node.prototype._onrequest = function (snapshot) {
@@ -248,7 +249,10 @@ Node.prototype._onrequest = function (snapshot) {
 
   // publish response
   responseRef.update({
-    id: this.id
+    id: this.id,
+    upstream: {
+      id: this.upstream ? this.upstream.id : null
+    }
   })
 
   // watch for request withdrawal
@@ -266,13 +270,61 @@ Node.prototype._onresponse = function (snapshot) {
     return
   }
 
+  if (this._responses) {
+    this._responses.push(snapshot)
+  } else {
+    this._responses = [ snapshot ]
+    setTimeout(this._reviewResponses.bind(this), 250)
+  }
+}
+
+Node.prototype._reviewResponses = function () {
+  this._responsesRef.off('child_added', this._onresponse)
+
+  if (this.state !== 'requesting') {
+    delete this._responses
+    return
+  }
+
+  var candidates = {}
+
+  for (var i in this._responses) {
+    var snapshot = this._responses[i]
+    var response = snapshot.val()
+
+    if (!response.id || this.blacklist.contains(response.id)) {
+      continue
+    }
+
+    if (!response.upstream) {
+      this._acceptResponse(snapshot)
+      return
+    }
+
+    candidates[response.id] = {
+      snapshot: snapshot,
+      upstream: response.upstream.id
+    }
+  }
+
+  delete this._responses
+
+  for (var i in candidates) {
+    if (candidates[candidates[i].upstream]) {
+      delete candidates[i]
+    }
+  }
+
+  var keys = Object.keys(candidates)
+  if (keys.length) {
+    this._acceptResponse(candidates[keys[0]].snapshot)
+  }
+}
+
+Node.prototype._acceptResponse = function (snapshot) {
   var responseRef = snapshot.ref()
   var response = snapshot.val()
   var peerId = response.id
-
-  if (!peerId || this.blacklist.contains(peerId)) {
-    return
-  }
 
   // change state -> connecting (this prevents accepting multiple responses)
   debug(this.id + ' got response from ' + peerId)
