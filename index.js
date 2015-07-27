@@ -84,7 +84,6 @@ Node.prototype.connect = function () {
 
   // reporting?
   if (this.reportInterval && !this._reportInterval) {
-    this._reportInterval = setTimeout(this._onreportNeeded, this.reportInterval)
     this._onreportNeeded()
   }
 
