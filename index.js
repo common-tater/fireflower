@@ -551,6 +551,10 @@ Node.prototype._onreportNeeded = function () {
     report.root = true
   }
 
+  if (this.reportData) {
+    report.data = this.reportData
+  }
+
   this._reports
     .child(this.id)
     .update(report)
