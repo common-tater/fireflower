@@ -41,6 +41,10 @@ function Node (url, opts) {
   // ensure K
   this.K = this.K || 0
 
+  // use external setTimeout if provided
+  this._setTimeout = this.opts.setTimeout || window.setTimeout.bind(window)
+  this._clearTimeout = this.opts.clearTimeout || window.clearTimeout.bind(window)
+
   // bind callbacks
   this._onconfig = this._onconfig.bind(this)
   this._doconnect = this._doconnect.bind(this)
@@ -114,7 +118,7 @@ Node.prototype.disconnect = function () {
   this._requestsRef.off('child_added', this._onrequest)
 
   // stop reporting
-  clearTimeout(this._reportInterval)
+  this._clearTimeout(this._reportInterval)
   delete this._reportInterval
 
   // remove outstanding request / response listener
@@ -153,7 +157,7 @@ Node.prototype._doconnect = function () {
   if (this.root) {
 
     // emit connect but in nextTick
-    setTimeout(function () {
+    this._setTimeout(function () {
       // change state -> connected
       debug(self.id + ' connected as root')
       self.state = 'connected'
@@ -273,7 +277,7 @@ Node.prototype._onresponse = function (snapshot) {
     this._responses.push(snapshot)
   } else {
     this._responses = [ snapshot ]
-    setTimeout(this._reviewResponses.bind(this), 250)
+    this._setTimeout(this._reviewResponses.bind(this), 250)
   }
 }
 
@@ -384,7 +388,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   })
 
   // timeout connections
-  setTimeout(function () {
+  this._setTimeout(function () {
     if (!peer.didConnect) {
       peer.close()
     }
@@ -468,7 +472,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 
     // give our mask update a tiny head start
     var self = this
-    setTimeout(function () {
+    this._setTimeout(function () {
       if (!self._preventReconnect) {
         self.connect()
       }
@@ -559,7 +563,7 @@ Node.prototype._onreportNeeded = function () {
     .child(this.id)
     .update(report)
 
-  this._reportInterval = setTimeout(this._onreportNeeded, this.reportInterval)
+  this._reportInterval = this._setTimeout(this._onreportNeeded, this.reportInterval)
 }
 
 Node.prototype._reviewRequests = function () {
