@@ -63,8 +63,8 @@ GraphView.prototype._onclick = function (evt) {
   if (evt.target !== this.nodesEl) return
 
   var node = this.add()
-  node.x = evt.x
-  node.y = evt.y
+  node.x = evt.x || evt.clientX
+  node.y = evt.y || evt.clientY
 
   this.render()
 }
