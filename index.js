@@ -358,6 +358,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   if (initiator) {
     this.downstream[peer.id] = peer
     peer.notifications = peer.createDataChannel('notifications')
+    peer.notifications.on('open', this._onnotificationsOpen.bind(this, peer))
     peer.requestId = requestId
   } else {
     peer.on('datachannel', function (channel) {
@@ -401,11 +402,13 @@ Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   peer.removeAllListeners('signal')
   remoteSignals.off()
 
-  if (this.downstream[peer.id]) {
-    this._ondownstreamConnect(peer)
-  } else {
+  if (!this.downstream[peer.id]) {
     this._onupstreamConnect(peer)
   }
+}
+
+Node.prototype._onnotificationsOpen = function (peer, evt) {
+  this._ondownstreamConnect(peer)
 }
 
 Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
