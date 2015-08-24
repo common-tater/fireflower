@@ -11,8 +11,6 @@ var SimplePeer = require('simpler-peer')
 var Blacklist = require('./blacklist')
 var Firebase = null
 
-var CONNECTION_TIMEOUT = 5000
-
 inherits(Node, events.EventEmitter)
 
 function Node (url, opts) {
@@ -24,6 +22,7 @@ function Node (url, opts) {
   this.opts = opts || {}
   this.root = this.opts.root
   this.reportInterval = this.opts.reportInterval
+  this.connectionTimeout = this.opts.connectionTimeout || 5000
   this.state = 'disconnected'
   this.upstream = null
   this.downstream = {}
@@ -393,7 +392,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
     if (!peer.didConnect) {
       peer.close()
     }
-  }, CONNECTION_TIMEOUT)
+  }, this.connectionTimeout)
 }
 
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
