@@ -390,6 +390,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   // timeout connections
   this._setTimeout(function () {
     if (!peer.didConnect) {
+      peer.didTimeout = true
       peer.close()
     }
   }, this.connectionTimeout)
@@ -516,7 +517,7 @@ Node.prototype._ondownstreamDisconnect = function (peer) {
   } else {
     if (peer.requestWithdrawn) {
       debug(this.id + ' saw request withdrawn by ' + peer.id)
-    } else {
+    } else if (peer.didTimeout) {
       debug(this.id + ' removing stale request by ' + peer.id)
       this._requestsRef.child(peer.requestId).remove()
     }
