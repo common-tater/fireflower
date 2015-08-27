@@ -51,6 +51,7 @@ function Node (url, opts) {
   this._onresponse = this._onresponse.bind(this)
   this._onmaskUpdate = this._onmaskUpdate.bind(this)
   this._onreportNeeded = this._onreportNeeded.bind(this)
+  this._reviewResponses = this._reviewResponses.bind(this)
 
   events.EventEmitter.call(this)
 }
@@ -274,14 +275,14 @@ Node.prototype._onresponse = function (snapshot) {
     this._responses.push(snapshot)
   } else {
     this._responses = [ snapshot ]
-    this._setTimeout(this._reviewResponses.bind(this), 250)
+    this._clearTimeout(this._responseReviewInterval)
+    this._responseReviewInterval = this._setTimeout(this._reviewResponses, 250)
   }
 }
 
 Node.prototype._reviewResponses = function () {
-  this._responsesRef.off('child_added', this._onresponse)
-
   if (this.state !== 'requesting') {
+    this._responsesRef.off('child_added', this._onresponse)
     delete this._responses
     return
   }
@@ -306,8 +307,6 @@ Node.prototype._reviewResponses = function () {
     candidates[response.id] = response
   }
 
-  delete this._responses
-
   var sorted = []
   for (var i in candidates) {
     if (!candidates[candidates[i].upstream]) {
@@ -319,7 +318,11 @@ Node.prototype._reviewResponses = function () {
   })
 
   if (sorted.length) {
+    this._responsesRef.off('child_added', this._onresponse)
     this._acceptResponse(sorted[0])
+    delete this._responses
+  } else {
+    this._responseReviewInterval = this._setTimeout(this._reviewResponses, 250)
   }
 }
 
