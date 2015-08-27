@@ -49,7 +49,7 @@ function Node (url, opts) {
   this._doconnect = this._doconnect.bind(this)
   this._onrequest = this._onrequest.bind(this)
   this._onresponse = this._onresponse.bind(this)
-  this._onmaskupdate = this._onmaskupdate.bind(this)
+  this._onmaskUpdate = this._onmaskUpdate.bind(this)
   this._onreportNeeded = this._onreportNeeded.bind(this)
 
   events.EventEmitter.call(this)
@@ -251,10 +251,8 @@ Node.prototype._onrequest = function (snapshot) {
 
   // publish response
   responseRef.update({
-    id: this.id,
-    upstream: {
-      id: this.upstream ? this.upstream.id : null
-    }
+    level: this._level || 0,
+    upstream: this.upstream ? this.upstream.id : null
   })
 
   // watch for request withdrawal
@@ -293,39 +291,39 @@ Node.prototype._reviewResponses = function () {
   for (var i in this._responses) {
     var snapshot = this._responses[i]
     var response = snapshot.val()
+    response.id = snapshot.key()
+    response.ref = snapshot.ref()
 
-    if (!response.id || this.blacklist.contains(response.id)) {
+    if (this.blacklist.contains(response.id)) {
       continue
     }
 
     if (!response.upstream) {
-      this._acceptResponse(snapshot)
+      this._acceptResponse(response)
       return
     }
 
-    candidates[response.id] = {
-      snapshot: snapshot,
-      upstream: response.upstream.id
-    }
+    candidates[response.id] = response
   }
 
   delete this._responses
 
+  var sorted = []
   for (var i in candidates) {
-    if (candidates[candidates[i].upstream]) {
-      delete candidates[i]
+    if (!candidates[candidates[i].upstream]) {
+      sorted.push(candidates[i])
     }
   }
+  sorted.sort(function (a, b) {
+    return a.level - b.level
+  })
 
-  var keys = Object.keys(candidates)
-  if (keys.length) {
-    this._acceptResponse(candidates[keys[0]].snapshot)
+  if (sorted.length) {
+    this._acceptResponse(sorted[0])
   }
 }
 
-Node.prototype._acceptResponse = function (snapshot) {
-  var responseRef = snapshot.ref()
-  var response = snapshot.val()
+Node.prototype._acceptResponse = function (response) {
   var peerId = response.id
 
   // change state -> connecting (this prevents accepting multiple responses)
@@ -337,7 +335,7 @@ Node.prototype._acceptResponse = function (snapshot) {
   this._requestRef.child('removal_flag').off()
 
   // attempt a connection
-  this._connectToPeer(false, peerId, null, responseRef)
+  this._connectToPeer(false, peerId, null, response.ref)
 }
 
 Node.prototype._connectToPeer = function (initiator, peerId, requestId, responseRef) {
@@ -363,7 +361,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
     peer.on('datachannel', function (channel) {
       if (channel.label === 'notifications') {
         peer.notifications = channel
-        peer.notifications.on('message', self._onmaskupdate)
+        peer.notifications.on('message', self._onmaskUpdate)
       }
     })
   }
@@ -471,7 +469,10 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   if (!this._preventReconnect) {
 
     // mask off our descendants
-    this._onmaskupdate({ data: this.id })
+    this._updateMask({
+      mask: this.id,
+      level: 0x10000
+    })
 
     // give our mask update a tiny head start
     var self = this
@@ -494,12 +495,13 @@ Node.prototype._ondownstreamConnect = function (peer) {
   }
 
   // make sure downstream has the most up to date mask
-  if (this._mask) {
-    try {
-      peer.notifications.send(this._mask)
-    } catch (err) {
-      console.warn(err)
-    }
+  try {
+    peer.notifications.send(JSON.stringify({
+      mask: this._mask,
+      level: this._level || 0
+    }))
+  } catch (err) {
+    console.warn(this.id + ' failed to send initial mask update to ' + peer.id, err)
   }
 }
 
@@ -526,10 +528,15 @@ Node.prototype._ondownstreamDisconnect = function (peer) {
   this._reviewRequests()
 }
 
-Node.prototype._onmaskupdate = function (evt) {
-  this._mask = evt.data
+Node.prototype._onmaskUpdate = function (evt) {
+  this._updateMask(JSON.parse(evt.data))
+}
 
-  debug(this.id + ' set mask to ' + this._mask)
+Node.prototype._updateMask = function (data) {
+  this._mask = data.mask
+  this._level = ++data.level
+
+  debug(this.id + ' set mask to ' + this._mask + ' and level to ' + this._level)
 
   // oops we made a circle, fix that
   if (this.downstream[this._mask]) {
@@ -540,9 +547,9 @@ Node.prototype._onmaskupdate = function (evt) {
   for (var i in this.downstream) {
     var notifications = this.downstream[i].notifications
     try {
-      notifications.send(this._mask)
+      notifications.send(JSON.stringify(data))
     } catch (err) {
-      console.warn(err)
+      console.warn(this.id + ' failed to relay mask update downstream', err)
     }
   }
 }
