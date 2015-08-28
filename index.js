@@ -391,6 +391,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   // timeout connections
   this._setTimeout(function () {
     if (!peer.didConnect) {
+      debug(self.id + ' connection to ' + peer.id + ' timed out')
       peer.didTimeout = true
       peer.close()
     }
