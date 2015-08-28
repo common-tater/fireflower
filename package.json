@@ -1,6 +1,6 @@
 {
   "name": "fireflower",
-  "version": "2.6.1",
+  "version": "2.6.2",
   "description": "Scalable and resilient data broadcasting between peers",
   "keywords": "datachannel peer binary flowering stream firebase",
   "dependencies": {
