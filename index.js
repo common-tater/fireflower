@@ -478,13 +478,13 @@ Node.prototype._onupstreamDisconnect = function (peer) {
       level: 0x10000
     })
 
-    // give our mask update a tiny head start
+    // give our mask update a head start and/or wait longer if we timed out
     var self = this
     this._setTimeout(function () {
       if (!self._preventReconnect) {
         self.connect()
       }
-    }, 100)
+    }, peer.didTimeout ? this.connectionTimeout : 100)
   }
 }
 
