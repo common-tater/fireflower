@@ -484,7 +484,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
       if (!self._preventReconnect) {
         self.connect()
       }
-    }, peer.didTimeout ? this.connectionTimeout : 100)
+    }, peer.didConnect ? 100 : this.connectionTimeout)
   }
 }
 
