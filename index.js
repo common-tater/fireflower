@@ -53,6 +53,8 @@ function Node (url, opts) {
   this._onreportNeeded = this._onreportNeeded.bind(this)
   this._reviewResponses = this._reviewResponses.bind(this)
 
+  this._websocketConnected = this.opts.websocketConnected
+
   events.EventEmitter.call(this)
 }
 
@@ -154,12 +156,11 @@ Node.prototype._onconfig = function (snapshot) {
 Node.prototype._doconnect = function () {
   var self = this
 
-  if (this.root) {
-
+  if (this._websocketConnected) {
     // emit connect but in nextTick
     this._setTimeout(function () {
       // change state -> connected
-      debug(self.id + ' connected as root')
+      debug(self.id + ' connected as websocket peer')
       self.state = 'connected'
       self.emit('statechange')
 
@@ -173,7 +174,7 @@ Node.prototype._doconnect = function () {
     return
   }
 
-  // we are not root so publish a connection request
+  // we are not connected to the websocket, so publish a connection request
   this._dorequest()
 }
 
