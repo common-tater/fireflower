@@ -31,8 +31,8 @@ function Node (url, opts) {
   // firebase refs
   this._ref = new Firebase(this.url)
   this._configRef = this._ref.child('configuration')
-  this._requestsRef = this._ref.child('requests')
-  this._reports = this._ref.child('reports')
+  this._requestsRef = this._ref.child('peer/requests')
+  this._reports = this._ref.child('peer/reports')
 
   // set a random id if one was not provided
   this.id = this.opts.id || this._requestsRef.push().key()
