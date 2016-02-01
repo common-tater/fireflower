@@ -82,7 +82,7 @@ Object.defineProperty(Node.prototype, 'K', {
 })
 
 Node.prototype.connect = function () {
-  if (this.state !== 'disconnected') {
+  if (this.state !== 'disconnected' && this.state !== 'websocketconnected') {
     throw new Error('invalid state for connect')
   }
 
@@ -144,6 +144,31 @@ Node.prototype.disconnect = function () {
   return this
 }
 
+Node.prototype.changeToRequesting = function () {
+  // if we're not already requesting or being requested, and we're
+  // not already successfully connected to the flower
+  if (!this._requesting && !this._beingRequested && this.state !== 'connected') {
+    this._requesting = true
+    this.disconnect()
+    this._websocketConnected = false
+    this.connect()
+  }
+}
+
+Node.prototype._changeToNotRequesting = function () {
+  var self = this
+
+  this.disconnect()
+  this._websocketConnected = true
+  this.connect()
+  this._clearTimeout(this._requestingTimer)
+  this._requestingTimer = this._setTimeout(function () {
+    self._requesting = false
+    debug('change to requesting')
+    self.changeToRequesting()
+  }, 30000)
+}
+
 // private api below
 
 Node.prototype._onconfig = function (snapshot) {
@@ -161,7 +186,7 @@ Node.prototype._doconnect = function () {
     this._setTimeout(function () {
       // change state -> connected
       debug(self.id + ' connected as websocket peer')
-      self.state = 'connected'
+      self.state = 'websocketconnected'
       self.emit('statechange')
 
       // emit connect
@@ -180,6 +205,13 @@ Node.prototype._doconnect = function () {
 
 Node.prototype._dorequest = function () {
   var self = this
+
+  this._stateCheckTimer = this._setTimeout(function () {
+    debug('after 10 seconds, checking state: ' + self.state)
+    if (self.state !== 'connected' && self.state !== 'websocketconnected' && this._websocketConnected) {
+      self._changeToNotRequesting()
+    }
+  }, 10000)
 
   this._requestRef = this._requestsRef.push({
     id: this.id,
@@ -203,9 +235,11 @@ Node.prototype._dorequest = function () {
 }
 
 Node.prototype._onrequest = function (snapshot) {
-  if (this.state !== 'connected') {
+  if (this.state !== 'connected' && this.state !== 'websocketconnected') {
     return // can't respond to requests unless we are connected
   }
+
+  this._beingRequested = true
 
   if (Object.keys(this.downstream).length >= this.opts.K) {
     return // can't respond to requests if we've hit K peers
@@ -378,13 +412,13 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   })
 
   peer.on('signal', function (signal) {
-    if (initiator && self.state !== 'connected') return
+    if (initiator && self.state !== 'connected' && self.state !== 'websocketconnected') return
     signal = JSON.parse(JSON.stringify(signal))
     localSignals.push(signal)
   })
 
   remoteSignals.on('child_added', function (snapshot) {
-    if (initiator && self.state !== 'connected') return
+    if (initiator && self.state !== 'connected' && self.state !== 'websocketconnected') return
     var signal = snapshot.val()
     peer.signal(signal)
   })
@@ -396,6 +430,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       peer.didTimeout = true
       peer.close()
     }
+    self._beingRequested = false
   }, this.connectionTimeout)
 }
 
