@@ -11,6 +11,9 @@ var SimplePeer = require('simpler-peer')
 var Blacklist = require('./blacklist')
 var Firebase = null
 
+var REQUESTING_PEERS_TIMEOUT = 10000
+var NOT_REQUESTING_PEERS_TIMEOUT = 20000
+
 inherits(Node, events.EventEmitter)
 
 function Node (url, opts) {
@@ -94,9 +97,11 @@ Node.prototype.connect = function () {
   }
 
   // change state -> requesting
-  debug(this.id + ' requesting connection')
-  this.state = 'requesting'
-  this.emit('statechange')
+  if (this.state !== 'websocketconnected') {
+    debug(this.id + ' requesting connection')
+    this.state = 'requesting'
+    this.emit('statechange')
+  }
 
   // watch config
   if (!this._watchingConfig) {
@@ -145,28 +150,40 @@ Node.prototype.disconnect = function () {
 }
 
 Node.prototype.changeToRequesting = function () {
+  var self = this
+  if (this._requesting || Object.keys(this.downstream).length > 0) return
+
+  this._requesting = true
+  debug('start requesting peer connections')
   // if we're not already requesting or being requested, and we're
   // not already successfully connected to the flower
-  if (!this._requesting && !this._beingRequested && this.state !== 'connected') {
-    this._requesting = true
+  if (!this._beingRequested && this.state !== 'connected') {
     this.disconnect()
     this._websocketConnected = false
     this.connect()
+    this._clearTimeout(this._requestingTimer)
+    this._requestingTimer = this._setTimeout(function () {
+      if (self.state !== 'connected') {
+        self._changeToNotRequesting()
+      }
+    }, REQUESTING_PEERS_TIMEOUT)
   }
 }
 
 Node.prototype._changeToNotRequesting = function () {
   var self = this
+  if (!this._requesting) return
 
+  debug('stop requesting peer connections')
   this.disconnect()
   this._websocketConnected = true
   this.connect()
+  // make sure there's a buffer time between when this is called
+  // and when anyone is allowed to call changeToRequesting again
   this._clearTimeout(this._requestingTimer)
   this._requestingTimer = this._setTimeout(function () {
     self._requesting = false
-    debug('change to requesting')
-    self.changeToRequesting()
-  }, 30000)
+  }, NOT_REQUESTING_PEERS_TIMEOUT)
 }
 
 // private api below
@@ -479,6 +496,12 @@ Node.prototype._onupstreamConnect = function (peer) {
   this.emit('statechange')
   this.emit('connect', peer)
 
+  // clear the timer that will be trying to disconnect us in
+  // case we weren't able to connect
+  this._clearTimeout(this._requestingTimer)
+
+  this._websocketConnected = false
+
   // begin responding to requests
   this._reviewRequests()
 }
@@ -504,6 +527,10 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   if (peer.didConnect) {
     this.emit('disconnect', peer)
   }
+
+  // for now, let the reconnect to the websocket flower happen
+  // and don't try to reconnect to peers
+  return
 
   // attempt to reconnect if we were not disconnected intentionally
   if (!this._preventReconnect) {
