@@ -180,8 +180,7 @@ Node.prototype._changeToNotRequesting = function () {
   this.connect()
   // make sure there's a buffer time between when this is called
   // and when anyone is allowed to call changeToRequesting again
-  this._clearTimeout(this._requestingTimer)
-  this._requestingTimer = this._setTimeout(function () {
+  this._setTimeout(function () {
     self._requesting = false
   }, NOT_REQUESTING_PEERS_TIMEOUT)
 }
@@ -446,6 +445,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       debug(self.id + ' connection to ' + peer.id + ' timed out')
       peer.didTimeout = true
       peer.close()
+      this._requesting = false
     }
     self._beingRequested = false
   }, this.connectionTimeout)
@@ -647,7 +647,8 @@ Node.prototype._onreportNeeded = function () {
 }
 
 Node.prototype._reviewRequests = function () {
-  if (this.state === 'connected' && Object.keys(this.downstream).length < this.opts.K) {
+  if ((this.state === 'connected' || this.state === 'websocketconnected')
+        && Object.keys(this.downstream).length < this.opts.K) {
     this._requestsRef.off('child_added', this._onrequest)
     this._requestsRef.on('child_added', this._onrequest)
   }
