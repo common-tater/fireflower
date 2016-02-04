@@ -34,8 +34,8 @@ function Node (url, opts) {
   // firebase refs
   this._ref = new Firebase(this.url)
   this._configRef = this._ref.child('configuration')
-  this._requestsRef = this._ref.child('peer/requests')
-  this._reports = this._ref.child('peer/reports')
+  this._requestsRef = this._ref.child('requests')
+  this._reports = this._ref.child('reports')
 
   // set a random id if one was not provided
   this.id = this.opts.id || this._requestsRef.push().key()
@@ -57,6 +57,7 @@ function Node (url, opts) {
   this._reviewResponses = this._reviewResponses.bind(this)
 
   this._websocketConnected = this.opts.websocketConnected
+  this._websocketUserId = this._websocketConnected
 
   events.EventEmitter.call(this)
 }
@@ -180,9 +181,10 @@ Node.prototype._changeToNotRequesting = function () {
   this.connect()
   // make sure there's a buffer time between when this is called
   // and when anyone is allowed to call changeToRequesting again
+  var randomDuration = Math.random() * NOT_REQUESTING_PEERS_TIMEOUT
   this._setTimeout(function () {
     self._requesting = false
-  }, NOT_REQUESTING_PEERS_TIMEOUT)
+  }, NOT_REQUESTING_PEERS_TIMEOUT + randomDuration)
 }
 
 // private api below
@@ -198,6 +200,7 @@ Node.prototype._doconnect = function () {
   var self = this
 
   if (this._websocketConnected) {
+    this._createRoot(this._websocketUserId)
     // emit connect but in nextTick
     this._setTimeout(function () {
       // change state -> connected
@@ -217,6 +220,18 @@ Node.prototype._doconnect = function () {
 
   // we are not connected to the websocket, so publish a connection request
   this._dorequest()
+}
+
+Node.prototype._createRoot = function (rootUserId) {
+  var report = {
+    root: true,
+    state: 'connected',
+    data: {
+      id: rootUserId,
+      username: 'root'
+    }
+  }
+  this._reports.child(rootUserId).update(report)
 }
 
 Node.prototype._dorequest = function () {
@@ -622,9 +637,15 @@ Node.prototype._updateMask = function (data) {
 }
 
 Node.prototype._onreportNeeded = function () {
+  var upstream = null
+  if (this.state === 'websocketconnected') {
+    upstream = this._websocketUserId
+  } else if (this.upstream) {
+    upstream = this.upstream.id
+  }
   var report = {
     state: this.state,
-    upstream: this.upstream ? this.upstream.id : null,
+    upstream: upstream,
     timestamp: Firebase.ServerValue.TIMESTAMP
   }
 
