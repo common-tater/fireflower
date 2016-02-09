@@ -38,7 +38,7 @@ function Node (url, opts) {
   this._reports = this._ref.child('reports')
 
   // set a random id if one was not provided
-  this.id = this.opts.id || this._requestsRef.push().key()
+  this.id = this.opts.user_id || this._requestsRef.push().key()
 
   // ensure K
   this.K = this.K || 0
