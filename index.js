@@ -38,7 +38,9 @@ function Node (url, opts) {
   this._reports = this._ref.child('reports')
 
   // set a random id if one was not provided
-  this.id = this.opts.user_id || this._requestsRef.push().key()
+  this.id = this.opts.id
+  this.userId = this.opts.userId || String(Math.random()).slice(2)
+  this.peerId = this.opts.peerId || String(Math.random()).slice(2)
 
   // ensure K
   this.K = this.K || 0
@@ -72,7 +74,7 @@ Object.defineProperty(Node.prototype, 'K', {
       throw new Error('K must be 0 or a positive integer')
     }
 
-    debug(this.id + ' set K to ' + value)
+    debug(this.peerId + ' set K to ' + value)
     this.opts.K = value
 
     var n = 0
@@ -99,7 +101,7 @@ Node.prototype.connect = function () {
 
   // change state -> requesting
   if (this.state !== 'websocketconnected') {
-    debug(this.id + ' requesting connection')
+    debug(this.peerId + ' requesting connection')
     this.state = 'requesting'
     this.emit('statechange')
   }
@@ -204,7 +206,7 @@ Node.prototype._doconnect = function () {
     // emit connect but in nextTick
     this._setTimeout(function () {
       // change state -> connected
-      debug(self.id + ' connected as websocket peer')
+      debug(self.peerId + ' connected as websocket peer')
       self.state = 'websocketconnected'
       self.emit('statechange')
 
@@ -245,7 +247,7 @@ Node.prototype._dorequest = function () {
   }, 10000)
 
   this._requestRef = this._requestsRef.push({
-    id: this.id,
+    id: this.peerId,
     removal_flag: {
       removed: false
     }
@@ -306,9 +308,9 @@ Node.prototype._onrequest = function (snapshot) {
     }
   }
 
-  debug(this.id + ' saw request by ' + peerId)
+  debug(this.peerId + ' saw request by ' + peerId)
 
-  var responseRef = requestRef.child('responses/' + this.id)
+  var responseRef = requestRef.child('responses/' + this.peerId)
 
   // initiate peer connection
   // we have to do this before actually writing our response because
@@ -396,7 +398,7 @@ Node.prototype._acceptResponse = function (response) {
   var peerId = response.id
 
   // change state -> connecting (this prevents accepting multiple responses)
-  debug(this.id + ' got response from ' + peerId)
+  debug(this.peerId + ' got response from ' + peerId)
   this.state = 'connecting'
   this.emit('statechange')
 
@@ -439,7 +441,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   peer.on('close', this._onpeerDisconnect.bind(this, peer, remoteSignals))
 
   peer.on('error', function (err) {
-    debug(this.id + ' saw peer connection error', err)
+    debug(this.peerId + ' saw peer connection error', err)
   })
 
   peer.on('signal', function (signal) {
@@ -457,7 +459,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   // timeout connections
   this._setTimeout(function () {
     if (!peer.didConnect) {
-      debug(self.id + ' connection to ' + peer.id + ' timed out')
+      debug(self.peerId + ' connection to ' + peer.id + ' timed out')
       peer.didTimeout = true
       peer.close()
       this._requesting = false
@@ -498,7 +500,7 @@ Node.prototype._onupstreamConnect = function (peer) {
 
   // already got connected by someone else
   if (this.state === 'connected') {
-    debug(this.id + ' rejected upstream connection by ' + peer.id)
+    debug(this.peerId + ' rejected upstream connection by ' + peer.id)
     peer.close()
     return
   }
@@ -506,7 +508,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   this.upstream = peer
 
   // change state -> connected
-  debug(this.id + ' established upstream connection to ' + peer.id)
+  debug(this.peerId + ' established upstream connection to ' + peer.id)
   this.state = 'connected'
   this.emit('statechange')
   this.emit('connect', peer)
@@ -532,7 +534,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 
   // change state -> disconnected
   if (this.state !== 'disconnected') {
-    debug(this.id + ' lost upstream connection to ' + peer.id)
+    debug(this.peerId + ' lost upstream connection to ' + peer.id)
   }
 
   this.state = 'disconnected'
@@ -552,7 +554,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 
     // mask off our descendants
     this._updateMask({
-      mask: this.id,
+      mask: this.peerId,
       level: 0x10000
     })
 
@@ -568,7 +570,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 
 Node.prototype._ondownstreamConnect = function (peer) {
   // emit peerconnect
-  debug(this.id + ' established downstream connection to ' + peer.id)
+  debug(this.peerId + ' established downstream connection to ' + peer.id)
   this.emit('peerconnect', peer)
 
   // stop responding to requests if peers > K
@@ -583,7 +585,7 @@ Node.prototype._ondownstreamConnect = function (peer) {
       level: this._level || 0
     }))
   } catch (err) {
-    console.warn(this.id + ' failed to send initial mask update to ' + peer.id, err)
+    console.warn(this.peerId + ' failed to send initial mask update to ' + peer.id, err)
   }
 }
 
@@ -594,15 +596,15 @@ Node.prototype._ondownstreamDisconnect = function (peer) {
   // emit events and potentially remove stale requests
   if (peer.didConnect) {
     if (this.state !== 'disconnected') {
-      debug(this.id + ' lost downstream connection to ' + peer.id)
+      debug(this.peerId + ' lost downstream connection to ' + peer.id)
     }
 
     this.emit('peerdisconnect', peer)
   } else {
     if (peer.requestWithdrawn) {
-      debug(this.id + ' saw request withdrawn by ' + peer.id)
+      debug(this.peerId + ' saw request withdrawn by ' + peer.id)
     } else if (peer.didTimeout) {
-      debug(this.id + ' removing stale request by ' + peer.id)
+      debug(this.peerId + ' removing stale request by ' + peer.id)
       this._requestsRef.child(peer.requestId).remove()
     }
   }
@@ -618,11 +620,11 @@ Node.prototype._updateMask = function (data) {
   this._mask = data.mask
   this._level = ++data.level
 
-  debug(this.id + ' set mask to ' + this._mask + ' and level to ' + this._level)
+  debug(this.peerId + ' set mask to ' + this._mask + ' and level to ' + this._level)
 
   // oops we made a circle, fix that
   if (this.downstream[this._mask]) {
-    debug(this.id + ' destroying accidental circle back to ' + this._mask)
+    debug(this.peerId + ' destroying accidental circle back to ' + this._mask)
     this.downstream[this._mask].close()
   }
 
@@ -631,7 +633,7 @@ Node.prototype._updateMask = function (data) {
     try {
       notifications.send(JSON.stringify(data))
     } catch (err) {
-      console.warn(this.id + ' failed to relay mask update downstream', err)
+      console.warn(this.peerId + ' failed to relay mask update downstream', err)
     }
   }
 }
@@ -658,7 +660,7 @@ Node.prototype._onreportNeeded = function () {
   }
 
   this._reports
-    .child(this.id)
+    .child(this.peerId)
     .update(report)
 
   this._reportInterval = this._setTimeout(
