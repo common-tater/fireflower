@@ -490,10 +490,6 @@ Node.prototype._onupstreamConnect = function (peer) {
   this.emit('statechange')
   this.emit('connect', peer)
 
-  // clear the timer that will be trying to disconnect us in
-  // case we weren't able to connect
-  this._clearTimeout(this._requestingTimer)
-
   this._websocketConnected = false
 
   // begin responding to requests
