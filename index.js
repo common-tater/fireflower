@@ -11,9 +11,6 @@ var SimplePeer = require('simpler-peer')
 var Blacklist = require('./blacklist')
 var Firebase = null
 
-var REQUESTING_PEERS_TIMEOUT = 10000
-var NOT_REQUESTING_PEERS_TIMEOUT = 20000
-
 inherits(Node, events.EventEmitter)
 
 function Node (url, opts) {
@@ -153,7 +150,6 @@ Node.prototype.disconnect = function () {
 }
 
 Node.prototype.changeToRequesting = function () {
-  var self = this
   if (this._requesting || Object.keys(this.downstream).length > 0) return
 
   this._requesting = true
@@ -164,29 +160,17 @@ Node.prototype.changeToRequesting = function () {
     this.disconnect()
     this._websocketConnected = false
     this.connect()
-    this._clearTimeout(this._requestingTimer)
-    this._requestingTimer = this._setTimeout(function () {
-      if (self.state !== 'connected') {
-        self._changeToNotRequesting()
-      }
-    }, REQUESTING_PEERS_TIMEOUT)
   }
 }
 
-Node.prototype._changeToNotRequesting = function () {
-  var self = this
+Node.prototype.changeToNotRequesting = function () {
   if (!this._requesting) return
 
+  this._requesting = false
   debug('stop requesting peer connections')
   this.disconnect()
   this._websocketConnected = true
   this.connect()
-  // make sure there's a buffer time between when this is called
-  // and when anyone is allowed to call changeToRequesting again
-  var randomDuration = Math.random() * NOT_REQUESTING_PEERS_TIMEOUT
-  this._setTimeout(function () {
-    self._requesting = false
-  }, NOT_REQUESTING_PEERS_TIMEOUT + randomDuration)
 }
 
 // private api below
@@ -238,13 +222,6 @@ Node.prototype._createRoot = function (rootUserId) {
 
 Node.prototype._dorequest = function () {
   var self = this
-
-  this._stateCheckTimer = this._setTimeout(function () {
-    debug('after 10 seconds, checking state: ' + self.state)
-    if (self.state !== 'connected' && self.state !== 'websocketconnected' && this._websocketConnected) {
-      self._changeToNotRequesting()
-    }
-  }, 10000)
 
   this._requestRef = this._requestsRef.push({
     id: this.peerId,
