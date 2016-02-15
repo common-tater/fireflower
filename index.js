@@ -85,6 +85,7 @@ Object.defineProperty(Node.prototype, 'K', {
 })
 
 Node.prototype.connect = function () {
+  var self = this
   if (this.state !== 'disconnected' && this.state !== 'websocketconnected') {
     throw new Error('invalid state for connect')
   }
@@ -109,47 +110,54 @@ Node.prototype.connect = function () {
     this._watchingConfig = true
   }
 
-  this._doconnect()
+  this._setTimeout(function () {
+    self._doconnect()
+  })
 
   return this
 }
 
 Node.prototype.disconnect = function () {
-  this.state = 'disconnected'
-  this._preventReconnect = true
-  this._watchingConfig = false
+  var self = this
+  this._setTimeout(function () {
+    self.state = 'disconnected'
+    self._preventReconnect = true
+    self._watchingConfig = false
 
-  // remove some listeners
-  this.removeListener('configure', this._doconnect)
-  this._configRef.off('value', this._onconfig)
-  this._requestsRef.off('child_added', this._onrequest)
+    // remove some listeners
+    self.removeListener('configure', self._doconnect)
+    self._configRef.off('value', self._onconfig)
+    self._requestsRef.off('child_added', self._onrequest)
 
-  // stop reporting
-  this._clearTimeout(this._reportInterval)
-  delete this._reportInterval
+    // stop reporting
+    self._clearTimeout(self._reportInterval)
+    delete self._reportInterval
 
-  // remove outstanding request / response listener
-  if (this._requestRef) {
-    this._requestRef.remove()
-    this._responsesRef.off('child_added', this._onresponse)
-  }
+    // remove outstanding request / response listener
+    if (self._requestRef) {
+      self._requestRef.remove()
+      self._responsesRef.off('child_added', self._onresponse)
+    }
 
-  // close upstream connection
-  if (this.upstream) {
-    this.upstream.close()
-    this.upstream = null
-  }
+    // close upstream connection
+    if (self.upstream) {
+      self.upstream.close()
+      self.upstream = null
+    }
 
-  // close downstream connections
-  for (var i in this.downstream) {
-    this.downstream[i].close()
-  }
-  this.downstream = {}
+    // close downstream connections
+    for (var i in self.downstream) {
+      self.downstream[i].close()
+    }
+    self.downstream = {}
+
+  })
 
   return this
 }
 
 Node.prototype.changeToRequesting = function () {
+  var self = this
   if (this._requesting || Object.keys(this.downstream).length > 0) return
 
   this._requesting = true
@@ -158,19 +166,24 @@ Node.prototype.changeToRequesting = function () {
   // not already successfully connected to the flower
   if (!this._beingRequested && this.state !== 'connected') {
     this.disconnect()
-    this._websocketConnected = false
-    this.connect()
+    this._setTimeout(function () {
+      self._websocketConnected = false
+      self.connect()
+    })
   }
 }
 
 Node.prototype.changeToNotRequesting = function () {
+  var self = this
   if (!this._requesting) return
 
   this._requesting = false
   debug('stop requesting peer connections')
   this.disconnect()
-  this._websocketConnected = true
-  this.connect()
+  this._setTimeout(function () {
+    self._websocketConnected = true
+    self.connect()
+  })
 }
 
 // private api below
@@ -230,18 +243,20 @@ Node.prototype._dorequest = function () {
     }
   })
 
-  // make sure no one removes our request until we're connected
-  this._requestRef.child('removal_flag').once('child_removed', function () {
-    if (self.state === 'requesting') {
-      self._responsesRef.off('child_added', self._onresponse)
-      self._dorequest()
-    }
-  })
+  this._setTimeout(function () {
+    // make sure no one removes our request until we're connected
+    self._requestRef.child('removal_flag').once('child_removed', function () {
+      if (self.state === 'requesting') {
+        self._responsesRef.off('child_added', self._onresponse)
+        self._dorequest()
+      }
+    })
 
-  // listen for a response
-  delete this._responses
-  this._responsesRef = this._requestRef.child('responses')
-  this._responsesRef.on('child_added', this._onresponse)
+    // listen for a response
+    delete this._responses
+    self._responsesRef = self._requestRef.child('responses')
+    self._responsesRef.on('child_added', self._onresponse)
+  })
 }
 
 Node.prototype._onrequest = function (snapshot) {
@@ -439,7 +454,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       debug(self.peerId + ' connection to ' + peer.id + ' timed out')
       peer.didTimeout = true
       peer.close()
-      this._requesting = false
+      self._requesting = false
     }
     self._beingRequested = false
   }, this.connectionTimeout)
