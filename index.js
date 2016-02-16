@@ -387,6 +387,7 @@ Node.prototype._reviewResponses = function () {
 }
 
 Node.prototype._acceptResponse = function (response) {
+  var self = this
   var peerId = response.id
 
   // change state -> connecting (this prevents accepting multiple responses)
@@ -398,7 +399,9 @@ Node.prototype._acceptResponse = function (response) {
   this._requestRef.child('removal_flag').off()
 
   // attempt a connection
-  this._connectToPeer(false, peerId, null, response.ref)
+  this._setTimeout(function () {
+    self._connectToPeer(false, peerId, null, response.ref)
+  })
 }
 
 Node.prototype._connectToPeer = function (initiator, peerId, requestId, responseRef) {
