@@ -164,7 +164,7 @@ Node.prototype._reset = function () {
 
 Node.prototype.changeToRequesting = function () {
   var self = this
-  if (this._requesting || Object.keys(this.downstream).length > 0) return
+  if (this._requesting) return
 
   this._requesting = true
   debug('start requesting peer connections')
