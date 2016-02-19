@@ -120,7 +120,8 @@ Node.prototype.connect = function () {
 Node.prototype.disconnect = function () {
   var self = this
   this._setTimeout(function () {
-    self.state = 'disconnected'
+    self._reset()
+
     self._preventReconnect = true
     self._watchingConfig = false
 
@@ -128,32 +129,37 @@ Node.prototype.disconnect = function () {
     self.removeListener('configure', self._doconnect)
     self._configRef.off('value', self._onconfig)
     self._requestsRef.off('child_added', self._onrequest)
-
-    // stop reporting
-    self._clearTimeout(self._reportInterval)
-    delete self._reportInterval
-
-    // remove outstanding request / response listener
-    if (self._requestRef) {
-      self._requestRef.remove()
-      self._responsesRef.off('child_added', self._onresponse)
-    }
-
-    // close upstream connection
-    if (self.upstream) {
-      self.upstream.close()
-      self.upstream = null
-    }
+    self._responsesRef.off('child_added', self._onresponse)
 
     // close downstream connections
     for (var i in self.downstream) {
       self.downstream[i].close()
     }
     self.downstream = {}
-
   })
 
   return this
+}
+
+Node.prototype._reset = function () {
+  this.state = 'disconnected'
+
+  // remove outstanding request / response listener
+  if (this._requestRef) {
+    this._requestRef.remove()
+  }
+  delete this._responses
+
+  // close upstream connection
+  if (this.upstream) {
+    this.upstream.close()
+    this.upstream = null
+  }
+
+  this._onreportNeeded()
+  // stop reporting
+  this._clearTimeout(this._reportInterval)
+  delete this._reportInterval
 }
 
 Node.prototype.changeToRequesting = function () {
@@ -165,7 +171,7 @@ Node.prototype.changeToRequesting = function () {
   // if we're not already requesting or being requested, and we're
   // not already successfully connected to the flower
   if (!this._beingRequested && this.state !== 'connected') {
-    this.disconnect()
+    this._reset()
     this._setTimeout(function () {
       self._websocketConnected = false
       self.connect()
@@ -179,7 +185,7 @@ Node.prototype.changeToNotRequesting = function () {
 
   this._requesting = false
   debug('stop requesting peer connections')
-  this.disconnect()
+  this._reset()
   this._setTimeout(function () {
     self._websocketConnected = true
     self.connect()
@@ -267,6 +273,7 @@ Node.prototype._onrequest = function (snapshot) {
   this._beingRequested = true
 
   if (Object.keys(this.downstream).length >= this.opts.K) {
+    this._beingRequested = false
     return // can't respond to requests if we've hit K peers
   }
 
@@ -280,11 +287,13 @@ Node.prototype._onrequest = function (snapshot) {
   // these won't have an id though and can be removed
   if (!peerId) {
     requestRef.remove()
+    this._beingRequested = false
     return
   }
 
   // prevent circles
   if (peerId === this._mask) {
+    this._beingRequested = false
     return
   }
 
@@ -296,6 +305,7 @@ Node.prototype._onrequest = function (snapshot) {
       // if request ids don't match, the peer must have disconnected without us noticing
       knownPeer.close()
     } else {
+      this._beingRequested = false
       return
     }
   }
