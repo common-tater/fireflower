@@ -51,7 +51,7 @@ function Node (url, opts) {
   this._doconnect = this._doconnect.bind(this)
   this._onrequest = this._onrequest.bind(this)
   this._onresponse = this._onresponse.bind(this)
-  this._onmaskUpdate = this._onmaskUpdate.bind(this)
+  this._updateMask = this._updateMask.bind(this)
   this._onreportNeeded = this._onreportNeeded.bind(this)
   this._reviewResponses = this._reviewResponses.bind(this)
 
@@ -129,7 +129,7 @@ Node.prototype.disconnect = function () {
     self.removeListener('configure', self._doconnect)
     self._configRef.off('value', self._onconfig)
     self._requestsRef.off('child_added', self._onrequest)
-    self._responsesRef.off('child_added', self._onresponse)
+    self._responsesRef && self._responsesRef.off('child_added', self._onresponse)
 
     // close downstream connections
     for (var i in self.downstream) {
@@ -437,7 +437,14 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
     peer.on('datachannel', function (channel) {
       if (channel.label === 'notifications') {
         peer.notifications = channel
-        peer.notifications.on('message', self._onmaskUpdate)
+        peer.notifications.on('message', function (evt) {
+          var controlData = JSON.parse(evt.data)
+          // if the upstream peer doesn't have a mask set,
+          // then they are directly connected to the root,
+          // so then set this mask to be their peerId
+          controlData.mask = controlData.mask || peer.id
+          self._updateMask(controlData)
+        })
       }
     })
   }
@@ -613,10 +620,6 @@ Node.prototype._ondownstreamDisconnect = function (peer) {
   this._reviewRequests()
 }
 
-Node.prototype._onmaskUpdate = function (evt) {
-  this._updateMask(JSON.parse(evt.data))
-}
-
 Node.prototype._updateMask = function (data) {
   this._mask = data.mask
   this._level = ++data.level
@@ -664,6 +667,8 @@ Node.prototype._onreportNeeded = function () {
     .child(this.peerId)
     .update(report)
 
+  // clear any previous reporting timers that may have been started
+  this._clearTimeout(this._reportInterval)
   this._reportInterval = this._setTimeout(
     this._onreportNeeded,
     this.reportInterval
