@@ -244,6 +244,7 @@ Node.prototype._dorequest = function () {
 
   this._requestRef = this._requestsRef.push({
     id: this.peerId,
+    mask: this._mask ? this._mask : this.peerId,
     removal_flag: {
       removed: false
     }
@@ -292,7 +293,8 @@ Node.prototype._onrequest = function (snapshot) {
   }
 
   // prevent circles
-  if (peerId === this._mask) {
+  if (request.mask === this._mask || peerId === this._mask) {
+    debug('potential circle detected with mask ' + request.mask + ', ignoring request')
     this._beingRequested = false
     return
   }
@@ -366,6 +368,7 @@ Node.prototype._reviewResponses = function () {
     response.ref = snapshot.ref()
 
     if (this.blacklist.contains(response.id)) {
+      debug('ignoring response ' + response.id + ' because we already blacklisted this peer')
       continue
     }
 
@@ -553,27 +556,23 @@ Node.prototype._onupstreamDisconnect = function (peer) {
     this.emit('disconnect', peer)
   }
 
-  // for now, let the reconnect to the websocket flower happen
-  // and don't try to reconnect to peers
-  return
+  // // attempt to reconnect if we were not disconnected intentionally
+  // if (!this._preventReconnect) {
 
-  // attempt to reconnect if we were not disconnected intentionally
-  if (!this._preventReconnect) {
+  // mask off our descendants
+  this._updateMask({
+    mask: this.peerId,
+    level: 0x10000
+  })
 
-    // mask off our descendants
-    this._updateMask({
-      mask: this.peerId,
-      level: 0x10000
-    })
-
-    // give our mask update a head start and/or wait longer if we timed out
-    var self = this
-    this._setTimeout(function () {
-      if (!self._preventReconnect) {
-        self.connect()
-      }
-    }, peer.didConnect ? 100 : this.connectionTimeout)
-  }
+  //   // give our mask update a head start and/or wait longer if we timed out
+  //   var self = this
+  //   this._setTimeout(function () {
+  //     if (!self._preventReconnect) {
+  //       self.connect()
+  //     }
+  //   }, peer.didConnect ? 100 : this.connectionTimeout)
+  // }
 }
 
 Node.prototype._ondownstreamConnect = function (peer) {
