@@ -294,7 +294,7 @@ Node.prototype._onrequest = function (snapshot) {
 
   // prevent circles
   if (request.mask === this._mask || peerId === this._mask) {
-    debug('potential circle detected with mask ' + request.mask + ', ignoring request')
+    //debug('potential circle detected with mask ' + request.mask + ', ignoring request')
     this._beingRequested = false
     return
   }
@@ -637,6 +637,7 @@ Node.prototype._updateMask = function (data) {
       notifications.send(JSON.stringify(data))
     } catch (err) {
       console.warn(this.peerId + ' failed to relay mask update downstream', err)
+      this.downstream[i].close()
     }
   }
 }
