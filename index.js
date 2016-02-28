@@ -562,7 +562,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   // mask off our descendants
   this._updateMask({
     mask: this.peerId,
-    level: 0x10000
+    level: 0
   })
 
   //   // give our mask update a head start and/or wait longer if we timed out
