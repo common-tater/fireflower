@@ -643,12 +643,14 @@ Node.prototype._updateMask = function (data) {
 }
 
 Node.prototype._onreportNeeded = function () {
+  var self = this
   var upstream = null
   if (this.state === 'websocketconnected') {
     upstream = this._websocketUserId
   } else if (this.upstream) {
     upstream = this.upstream.id
   }
+
   var report = {
     state: this.state,
     upstream: upstream,
@@ -659,13 +661,19 @@ Node.prototype._onreportNeeded = function () {
     report.root = true
   }
 
-  if (this.reportData) {
-    report.data = this.reportData
-  }
-
+  // update the report root node, and then update its
+  // child 'data' node, since we don't want to overwrite
+  // existing data
   this._reports
     .child(this.peerId)
-    .update(report)
+    .update(report, function () {
+      if (self.reportData) {
+        self._reports
+          .child(self.peerId)
+          .child('data')
+          .update(self.reportData)
+      }
+    })
 
   // clear any previous reporting timers that may have been started
   this._clearTimeout(this._reportInterval)
