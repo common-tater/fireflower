@@ -205,7 +205,7 @@ Node.prototype._doconnect = function () {
   var self = this
 
   if (this._websocketConnected) {
-    this._createRoot(this._websocketUserId)
+    this._updateRoot(this._websocketUserId)
     // emit connect but in nextTick
     this._setTimeout(function () {
       // change state -> connected
@@ -227,16 +227,23 @@ Node.prototype._doconnect = function () {
   this._dorequest()
 }
 
-Node.prototype._createRoot = function (rootUserId) {
+Node.prototype._updateRoot = function (rootUserId) {
   var report = {
     root: true,
     state: 'connected',
     data: {
       id: rootUserId,
-      username: 'root'
+      username: 'waiting...'
     }
   }
-  this._reports.child(rootUserId).update(report)
+
+  // only update the db if there isn't yet any root at all, since
+  // we want a placeholder root for the viz
+  this._reports.child(rootUserId).transaction(function (currentUserData) {
+    if (currentUserData === null) {
+      return report
+    }
+  })
 }
 
 Node.prototype._dorequest = function () {
