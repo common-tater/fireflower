@@ -277,6 +277,9 @@ Node.prototype._onrequest = function (snapshot) {
   if (this.state !== 'connected' && this.state !== 'websocketconnected') {
     return // can't respond to requests unless we are connected
   }
+  if (!this.reportData || this.reportData.connection_score < 9) {
+    return // can't respond to requests unless our connection score is high enough
+  }
 
   this._beingRequested = true
 
