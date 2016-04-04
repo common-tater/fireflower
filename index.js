@@ -99,7 +99,9 @@ Node.prototype.connect = function () {
 
   // change state -> requesting
   if (this.state !== 'websocketconnected') {
-    debug(this.peerId + ' requesting connection')
+    if (this._requesting) {
+      debug(this.peerId + ' requesting connection')
+    }
     this.state = 'requesting'
     this.emit('statechange')
   }
@@ -209,7 +211,6 @@ Node.prototype._doconnect = function () {
     // emit connect but in nextTick
     this._setTimeout(function () {
       // change state -> connected
-      debug(self.peerId + ' connected as websocket peer')
       self.state = 'websocketconnected'
       self.emit('statechange')
 
