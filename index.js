@@ -28,14 +28,22 @@ function Node (url, opts) {
   this.downstream = {}
   this.blacklist = new Blacklist()
 
+  // only init firebase once
+  if (Firebase.apps.length === 0) {
+    var config = {
+      databaseURL: this.url
+    }
+    Firebase.initializeApp(config)
+  }
+
   // firebase refs
-  this._ref = new Firebase(this.url)
+  this._ref = Firebase.database().ref()
   this._configRef = this._ref.child('configuration')
   this._requestsRef = this._ref.child('requests')
   this._reports = this._ref.child('reports')
 
   // set a random id if one was not provided
-  this.id = this.opts.id || this._requestsRef.push().key()
+  this.id = this.opts.id || this._requestsRef.push().key
 
   // ensure K
   this.K = this.K || 0
@@ -211,8 +219,8 @@ Node.prototype._onrequest = function (snapshot) {
   }
 
   var self = this
-  var requestRef = snapshot.ref()
-  var requestId = snapshot.key()
+  var requestRef = snapshot.ref
+  var requestId = snapshot.key
   var request = snapshot.val()
   var peerId = request.id
 
@@ -292,8 +300,8 @@ Node.prototype._reviewResponses = function () {
   for (var i in this._responses) {
     var snapshot = this._responses[i]
     var response = snapshot.val()
-    response.id = snapshot.key()
-    response.ref = snapshot.ref()
+    response.id = snapshot.key
+    response.ref = snapshot.ref
 
     if (this.blacklist.contains(response.id)) {
       continue
@@ -562,7 +570,7 @@ Node.prototype._onreportNeeded = function () {
   var report = {
     state: this.state,
     upstream: this.upstream ? this.upstream.id : null,
-    timestamp: Firebase.ServerValue.TIMESTAMP
+    timestamp: Firebase.database.ServerValue.TIMESTAMP
   }
 
   if (this.root) {
