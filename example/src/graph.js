@@ -1,11 +1,13 @@
 module.exports = GraphView
 
-var fireflower = require('../../')(require('firebase'))
+var firebase = require('firebase/app')
+var firebaseDb = require('firebase/database')
+var fireflower = require('../../')(firebaseDb.getDatabase(firebase.getApp()))
 var NodeView = require('./node')
 var isRetina = window.devicePixelRatio > 1
 
-function GraphView (url, root) {
-  this.url = url
+function GraphView (path, root) {
+  this.path = path
   this.el = document.querySelector('#graph')
   this.nodesEl = this.el.querySelector('#nodes')
   this.canvas = this.el.querySelector('canvas')
@@ -49,7 +51,7 @@ GraphView.prototype.render = function () {
 }
 
 GraphView.prototype.add = function () {
-  var model = fireflower(this.url, { reportInterval: 2500 }).connect()
+  var model = fireflower(this.path, { reportInterval: 2500 }).connect()
   var node = new NodeView(this, model)
   this.nodes[node.id] = node
   return node
@@ -63,8 +65,8 @@ GraphView.prototype._onclick = function (evt) {
   if (evt.target !== this.nodesEl) return
 
   var node = this.add()
-  node.x = evt.x || evt.clientX
-  node.y = evt.y || evt.clientY
+  node.x = evt.clientX
+  node.y = evt.clientY
 
   this.render()
 }

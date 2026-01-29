@@ -1,5 +1,7 @@
 .DS_Store
 node_modules
 example/build.js
+example/build.js.map
+example/firebase-config.js
 test/env.json
 etc/env.json

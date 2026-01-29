@@ -1,6 +1,5 @@
 module.exports = NodeView
 
-var hyperglue = require('hyperglue2')
 var isRetina = window.devicePixelRatio > 1
 
 function NodeView (graph, model) {
@@ -14,7 +13,9 @@ function NodeView (graph, model) {
   this.width = 30
   this.height = 30
 
-  this.el = hyperglue('<div class="node"><div id="circle"></div><div id="label"></div></div>')
+  this.el = document.createElement('div')
+  this.el.className = 'node'
+  this.el.innerHTML = '<div id="circle"></div><div id="label"></div>'
   this.el.querySelector('#circle').addEventListener('click', this.destroy.bind(this))
 }
 
@@ -24,12 +25,8 @@ NodeView.prototype.render = function () {
   var upstream = this.graph.nodes[this.model.upstream && this.model.upstream.id]
   var scale = isRetina ? 2 : 1
 
-  hyperglue(this.el, {
-    _attr: {
-      'data-id': this.id
-    },
-    '#label': this.id
-  })
+  this.el.setAttribute('data-id', this.id)
+  this.el.querySelector('#label').textContent = this.id
 
   this.x = Math.min(this.x, this.graph.width)
   this.y = Math.min(this.y, this.graph.height)

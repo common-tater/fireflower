@@ -5,28 +5,56 @@
 Scalable broadcasting for streams of live data.
 
 ## How
-* [SimplePeer](https://github.com/feross/simple-peer) for representing peer node `RTCDataChannel` connections.
-* [Firebase](https://www.firebase.com) for `RTCPeerConnection` signaling.
+* Native [WebRTC](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API) for peer node `RTCDataChannel` connections.
+* [Firebase Realtime Database](https://firebase.google.com/docs/database) for `RTCPeerConnection` signaling.
+
+## Setup
+
+### Prerequisites
+* Node.js 18+
+* A Firebase project with Realtime Database enabled
+
+### Firebase Configuration
+1. Go to https://console.firebase.google.com
+2. Create a new project (or use an existing one)
+3. Go to Build > Realtime Database > Create Database
+4. Choose a location and start in **test mode** for development
+5. Go to Project Settings > General > Your apps > Add app (Web)
+6. Copy the config values into `example/firebase-config.js` (see `firebase-config.example.js`)
+
+### Install
+```
+$ npm install
+```
 
 ## Example
 ```
+$ cp example/firebase-config.example.js example/firebase-config.js
+# Edit example/firebase-config.js with your Firebase project config
 $ npm run example
 ```
 
-## Test
+Open http://localhost:8080 in your browser. Click the canvas to add peer nodes and watch the K-ary tree form in real-time. Works on desktop browsers and mobile (Chrome on Android, Safari on iOS).
+
+## Build
 ```
-$ npm run test
+$ npm run build
 ```
-There aren't any real tests yet (coming soon though!), for now this just runs standard.
 
 ## Require
 ```javascript
-var fireflower = require('fireflower')
+var firebase = require('firebase/app')
+var firebaseDb = require('firebase/database')
+
+var app = firebase.initializeApp({ /* your config */ })
+var db = firebaseDb.getDatabase(app)
+
+var fireflower = require('fireflower')(db)
 ```
 
 ## Constructor
 ```javascript
-var node = fireflower('tree-signals-url.firebaseio.com' [, opts])
+var node = fireflower('database/path' [, opts])
 ```
 
 Where `opts` can be:
@@ -34,13 +62,14 @@ Where `opts` can be:
 {
   id: '0',                            // string, optional
   root: true,                         // boolean, optional, indicates that you want to be the root node
-  reportInterval: 5000,               // int, optional, generate perodic status reports
+  reportInterval: 5000,               // int, optional, generate periodic status reports
+  connectionTimeout: 5000,            // int, optional, timeout for peer connections (default 5000ms)
   peerConfig: {                       // object, optional, standard RTCPeerConnection constructor options
     iceServers: [
       {
-        url: 'stun:23.21.150.121'
+        urls: 'stun:stun.l.google.com:19302'
       }, {
-        url: 'turn:global.turn.twilio.com:1234?transport=udp',
+        urls: 'turn:global.turn.twilio.com:3478?transport=udp',
         username: 'xxx',
         credential: 'yyy'
       }
@@ -66,16 +95,16 @@ Disconnect and / or halt any attempts to reconnect.
 #### `node.blacklist.contains(id)`
 
 ## Events
-#### `node.emit('connect', SimplePeerInstance)`
+#### `node.emit('connect', peer)`
 An upstream node has responded to the instance's request to join the tree and has established an `RTCDataChannel` connection.
 
-#### `node.emit('disconnect', SimplePeerInstance)`
+#### `node.emit('disconnect', peer)`
 Connection to upstream node was lost.
 
-#### `node.emit('peerconnect', SimplePeerInstance)`
+#### `node.emit('peerconnect', peer)`
 Response to a connection request was accepted and a downstream node was connected.
 
-#### `node.emit('peerdisconnect', SimplePeerInstance)`
+#### `node.emit('peerdisconnect', peer)`
 The connection to a downstream node was lost.
 
 #### `node.emit('configure')`
@@ -84,8 +113,12 @@ Configuration data was read for the first time or updated.
 #### `node.emit('error', error)`
 A configuration error occurred.
 
-## Note
-Just a prototype for the moment!
+## Browser Support
+Tested on modern browsers with WebRTC support:
+* Chrome (desktop and Android)
+* Firefox
+* Safari (desktop and iOS)
+* Edge
 
 ## License
 MIT
