@@ -199,6 +199,22 @@ Node.prototype.disconnect = function () {
 Node.prototype._onconfig = function (snapshot) {
   var data = snapshot.val()
   if (data) deepMerge(this.opts, data)
+
+  var wasServerOnly = this.serverOnly
+  this.serverOnly = this.opts.serverOnly || false
+
+  console.log('[fireflower] config changed', this.id, JSON.stringify(data))
+
+  // If serverOnly was just turned off while connected via server, start upgrade timer
+  if (wasServerOnly && !this.serverOnly && this._transport === 'server' && this.state === 'connected') {
+    console.log('[fireflower] serverOnly disabled, starting P2P upgrade', this.id)
+    this._stopUpgradeTimer()
+    var self = this
+    this._upgradeTimer = this._setTimeout(function () {
+      self._attemptUpgrade()
+    }, this.p2pUpgradeInterval)
+  }
+
   debug(this.id + ' updated configuration')
   this.emit('configure')
 }
@@ -211,6 +227,7 @@ Node.prototype._doconnect = function () {
     // emit connect but in nextTick
     this._setTimeout(function () {
       // change state -> connected
+      console.log('[fireflower] connected as root', self.id)
       debug(self.id + ' connected as root')
       self._connectedAt = Date.now()
       self.state = 'connected'
@@ -574,7 +591,6 @@ Node.prototype._stopUpgradeTimer = function () {
  */
 Node.prototype._attemptUpgrade = function () {
   if (this._transport !== 'server' || this.state !== 'connected') return
-
   debug(this.id + ' attempting P2P upgrade from server')
   var self = this
   var upgradeRequestRef = firebase.push(this._requestsRef, {
@@ -684,6 +700,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   // Upgraded from server to P2P
   if (previousTransport === 'server' && this._transport === 'p2p') {
     this._stopUpgradeTimer()
+    console.log('[fireflower] upgraded server -> p2p', this.id)
     debug(this.id + ' upgraded from server to P2P')
     this.emit('upgrade')
   }
@@ -699,6 +716,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   }
 
   // change state -> connected
+  console.log('[fireflower] upstream connected', this.id, '->', peer.id, 'transport:', this._transport)
   debug(this.id + ' established upstream connection to ' + peer.id)
   this.state = 'connected'
   this.emit('statechange')
@@ -709,6 +727,7 @@ Node.prototype._onupstreamConnect = function (peer) {
 }
 
 Node.prototype._onupstreamDisconnect = function (peer) {
+  console.log('[fireflower] upstream disconnected', this.id, '-x->', peer.id, 'transport:', peer.transportType)
   debug(this.id + ' lost upstream ' + peer.id)
   // stop responding to new requests
   firebase.off(this._requestsRef, 'child_added', this._onrequest)
@@ -759,6 +778,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 }
 
 Node.prototype._ondownstreamConnect = function (peer) {
+  console.log('[fireflower] downstream connected', this.id, '<-', peer.id, 'count:', Object.keys(this.downstream).length)
   // emit peerconnect
   debug(this.id + ' established downstream connection to ' + peer.id)
   this.emit('peerconnect', peer)
@@ -780,6 +800,7 @@ Node.prototype._ondownstreamConnect = function (peer) {
 }
 
 Node.prototype._ondownstreamDisconnect = function (peer) {
+  console.log('[fireflower] downstream disconnected', this.id, '-x-', peer.id, 'didConnect:', peer.didConnect)
   // remove from lookup
   delete this.downstream[peer.id]
   delete this._pendingAdapters[peer.id]

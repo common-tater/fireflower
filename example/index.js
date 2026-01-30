@@ -51,10 +51,23 @@ serverCheckbox.addEventListener('change', function () {
 // Force Server toggle: new clicked nodes only accept server responses
 var forceServerToggle = document.querySelector('#force-server-toggle')
 var forceServerCheckbox = forceServerToggle.querySelector('input')
-forceServerCheckbox.addEventListener('change', function () {
-  forceServerToggle.classList.toggle('active', forceServerCheckbox.checked)
+var forceServerConfigRef = ref(firebase.db, 'tree/configuration/serverOnly')
+
+onValue(forceServerConfigRef, function (snapshot) {
+  var enabled = !!snapshot.val()
+  forceServerCheckbox.checked = enabled
+  forceServerToggle.classList.toggle('active', enabled)
   if (window.graph) {
-    window.graph.forceServer = forceServerCheckbox.checked
+    window.graph.forceServer = enabled
+  }
+})
+
+forceServerCheckbox.addEventListener('change', function () {
+  var enabled = forceServerCheckbox.checked
+  forceServerToggle.classList.toggle('active', enabled)
+  set(forceServerConfigRef, enabled)
+  if (window.graph) {
+    window.graph.forceServer = enabled
   }
 })
 
