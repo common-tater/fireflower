@@ -4,5 +4,7 @@ example/build.js
 example/build.js.map
 example/firebase-config.js
 test/env.json
-etc/env.jsonvisualizer/
+etc/env.json
+visualizer/
 example/firebase-config.js
+.claude/

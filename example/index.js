@@ -14,6 +14,63 @@ var Graph = require('./src/graph')
 var knumber = document.querySelector('#k-number input')
 knumber.addEventListener('change', onkchanged)
 
+// --- Controls ---
+var { remove, set, onValue } = require('firebase/database')
+
+// Reset button: disconnects node, clears Firebase data, prevents reconnect
+var resetBtn = document.querySelector('#reset-btn')
+resetBtn.addEventListener('click', function () {
+  if (resetBtn.classList.contains('disabled')) return
+  resetBtn.classList.add('disabled')
+  resetBtn.textContent = 'Disconnected'
+  if (window.root) {
+    window.root.disconnect()
+  }
+  remove(ref(firebase.db, 'tree/requests'))
+  remove(ref(firebase.db, 'tree/reports'))
+})
+
+// Server toggle: enables/disables the relay server via Firebase config
+var serverToggle = document.querySelector('#server-toggle')
+var serverCheckbox = serverToggle.querySelector('input')
+var configRef = ref(firebase.db, 'tree/configuration/serverEnabled')
+
+onValue(configRef, function (snapshot) {
+  var enabled = snapshot.val()
+  if (enabled === null) enabled = true
+  serverCheckbox.checked = enabled
+  serverToggle.classList.toggle('active', enabled)
+})
+
+serverCheckbox.addEventListener('change', function () {
+  var enabled = serverCheckbox.checked
+  serverToggle.classList.toggle('active', enabled)
+  set(configRef, enabled)
+})
+
+// Force Server toggle: new clicked nodes only accept server responses
+var forceServerToggle = document.querySelector('#force-server-toggle')
+var forceServerCheckbox = forceServerToggle.querySelector('input')
+var forceServerConfigRef = ref(firebase.db, 'tree/configuration/serverOnly')
+
+onValue(forceServerConfigRef, function (snapshot) {
+  var enabled = !!snapshot.val()
+  forceServerCheckbox.checked = enabled
+  forceServerToggle.classList.toggle('active', enabled)
+  if (window.graph) {
+    window.graph.forceServer = enabled
+  }
+})
+
+forceServerCheckbox.addEventListener('change', function () {
+  var enabled = forceServerCheckbox.checked
+  forceServerToggle.classList.toggle('active', enabled)
+  set(forceServerConfigRef, enabled)
+  if (window.graph) {
+    window.graph.forceServer = enabled
+  }
+})
+
 // Check if a root node already exists before deciding to be root
 var treeRef = ref(firebase.db, 'tree/reports')
 get(treeRef).then(function(snapshot) {
@@ -25,7 +82,7 @@ get(treeRef).then(function(snapshot) {
     var now = Date.now()
     for (var id in reports) {
       var report = reports[id]
-      if (report.root && report.timestamp && (now - report.timestamp) < 10000) {
+      if (report.root && !report.isServer && report.timestamp && (now - report.timestamp) < 10000) {
         // Active root exists, we should connect as a child
         isRoot = false
         console.log('Found active root node:', id)
@@ -36,20 +93,36 @@ get(treeRef).then(function(snapshot) {
 
   console.log(isRoot ? 'Becoming ROOT node' : 'Connecting as CHILD node')
 
-  window.root = fireflower('tree', { root: isRoot, reportInterval: 2500 })
+  window.root = fireflower('tree', {
+    root: isRoot,
+    reportInterval: 2500
+  })
   window.root.connect()
 
+  window.root.on('fallback', function () {
+    console.log('%c FALLBACK: Switched to server relay', 'color: #00CED1; font-weight: bold')
+  })
+
+  window.root.on('upgrade', function () {
+    console.log('%c UPGRADE: Switched back to P2P', 'color: #00FF00; font-weight: bold')
+  })
+
   window.root.once('connect', function () {
+    console.log('Transport:', window.root.transport)
     window.graph = new Graph('tree', window.root)
     onkchanged()
   })
 }).catch(function(err) {
   console.error('Error checking for root:', err)
-  // Default to root if we can't check
-  window.root = fireflower('tree', { root: true, reportInterval: 2500 })
+
+  window.root = fireflower('tree', {
+    root: true,
+    reportInterval: 2500
+  })
   window.root.connect()
 
   window.root.once('connect', function () {
+    console.log('Transport:', window.root.transport)
     window.graph = new Graph('tree', window.root)
     onkchanged()
   })

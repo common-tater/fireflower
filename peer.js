@@ -14,14 +14,13 @@ function Peer (opts) {
   this.config = opts.config || {}
   this.channelConfig = opts.channelConfig || {}
   this.didConnect = false
+  this.transportType = 'p2p'
   this._closed = false
 
-  this._pc = new RTCPeerConnection(this.config)
+  var PeerConnection = (opts.wrtc && opts.wrtc.RTCPeerConnection) || RTCPeerConnection
+  this._pc = new PeerConnection(this.config)
   this._setupListeners()
 
-  if (this.initiator) {
-    this._negotiate()
-  }
 }
 
 Peer.prototype._setupListeners = function () {
@@ -30,7 +29,6 @@ Peer.prototype._setupListeners = function () {
 
   pc.onicecandidate = function (evt) {
     if (self._closed) return
-    console.log('Peer: ICE candidate', evt.candidate ? 'found' : 'end')
     if (evt.candidate) {
       if (self.trickle) {
         self.emit('signal', {
@@ -53,10 +51,22 @@ Peer.prototype._setupListeners = function () {
     self.emit('datachannel', evt.channel)
   }
 
+  // Also monitor RTCPeerConnection.connectionState (more reliable in modern Chrome)
+  pc.onconnectionstatechange = function () {
+    if (self._closed) return
+    var connState = pc.connectionState
+    if ((connState === 'connected') && !self.didConnect) {
+      self.didConnect = true
+      self.emit('connect')
+    }
+    if (connState === 'failed') {
+      self._destroy()
+    }
+  }
+
   pc.oniceconnectionstatechange = function () {
     if (self._closed) return
     var state = pc.iceConnectionState
-    console.log('Peer: ICE state change', state)
     if ((state === 'connected' || state === 'completed') && !self.didConnect) {
       self.didConnect = true
       self.emit('connect')
@@ -77,12 +87,9 @@ Peer.prototype._setupListeners = function () {
   }
 }
 
-Peer.prototype._negotiate = function () {
-  console.log('Peer: _negotiate starting (createOffer)')
+Peer.prototype.negotiate = function () {
   var self = this
   var pc = this._pc
-
-  this._dc = pc.createDataChannel('_default', this.channelConfig)
 
   pc.createOffer().then(function (offer) {
     return pc.setLocalDescription(offer)
@@ -99,7 +106,6 @@ Peer.prototype._negotiate = function () {
 }
 
 Peer.prototype.signal = function (data) {
-  console.log('Peer: signal received', data.type || (data.candidate ? 'candidate' : 'unknown'))
   var self = this
   var pc = this._pc
 
