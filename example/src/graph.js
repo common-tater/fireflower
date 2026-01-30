@@ -1,12 +1,16 @@
 module.exports = GraphView
 
-var firebase = require('firebase/app')
-var firebaseDb = require('firebase/database')
-var fireflower = require('../../')(firebaseDb.getDatabase(firebase.getApp()))
+var fireflower = null
+var firebaseInit = require('../firebase-init')
 var NodeView = require('./node')
 var isRetina = window.devicePixelRatio > 1
 
 function GraphView (path, root) {
+  // Initialize fireflower with the centralized database instance
+  if (!fireflower) {
+    fireflower = require('../../')(firebaseInit.getDb())
+  }
+
   this.path = path
   this.el = document.querySelector('#graph')
   this.nodesEl = this.el.querySelector('#nodes')

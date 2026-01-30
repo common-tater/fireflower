@@ -54,8 +54,8 @@ function Node (path, opts) {
   this.K = this.K || 0
 
   // use external setTimeout if provided
-  this._setTimeout = this.opts.setTimeout || setTimeout
-  this._clearTimeout = this.opts.clearTimeout || clearTimeout
+  this._setTimeout = this.opts.setTimeout || setTimeout.bind(window)
+  this._clearTimeout = this.opts.clearTimeout || clearTimeout.bind(window)
 
   // bind callbacks
   this._onconfig = this._onconfig.bind(this)
@@ -197,6 +197,7 @@ Node.prototype._doconnect = function () {
 }
 
 Node.prototype._dorequest = function () {
+  console.log('UseFireflower: _dorequest', this.id)
   var self = this
 
   this._requestRef = firebase.push(this._requestsRef, {
@@ -237,6 +238,7 @@ Node.prototype._onrequest = function (snapshot) {
   var requestRef = snapshot.ref
   var requestId = snapshot.key
   var request = snapshot.val()
+  console.log('UseFireflower: _onrequest from', requestId, request, 'myId:', this.id)
   var peerId = request.id
 
   // responders may accidentally recreate requests
@@ -324,6 +326,7 @@ Node.prototype._reviewResponses = function () {
     }
 
     if (!response.upstream) {
+      console.log('UseFireflower: accepting root response', response)
       this._acceptResponse(response)
       return
     }
@@ -343,6 +346,7 @@ Node.prototype._reviewResponses = function () {
 
   if (sorted.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
+    console.log('UseFireflower: accepting sorted response', sorted[0])
     this._acceptResponse(sorted[0])
     delete this._responses
   } else {
@@ -355,6 +359,7 @@ Node.prototype._acceptResponse = function (response) {
 
   // change state -> connecting (this prevents accepting multiple responses)
   debug(this.id + ' got response from ' + peerId)
+  console.log('UseFireflower: _acceptResponse from', peerId, response)
   this.state = 'connecting'
   this.emit('statechange')
 
@@ -430,6 +435,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
 }
 
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
+  console.log('UseFireflower: _onpeerConnect', peer.id)
   peer.didConnect = true
   peer.removeAllListeners('connect')
   peer.removeAllListeners('signal')

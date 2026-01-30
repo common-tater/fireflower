@@ -30,6 +30,7 @@ Peer.prototype._setupListeners = function () {
 
   pc.onicecandidate = function (evt) {
     if (self._closed) return
+    console.log('Peer: ICE candidate', evt.candidate ? 'found' : 'end')
     if (evt.candidate) {
       if (self.trickle) {
         self.emit('signal', {
@@ -55,6 +56,7 @@ Peer.prototype._setupListeners = function () {
   pc.oniceconnectionstatechange = function () {
     if (self._closed) return
     var state = pc.iceConnectionState
+    console.log('Peer: ICE state change', state)
     if ((state === 'connected' || state === 'completed') && !self.didConnect) {
       self.didConnect = true
       self.emit('connect')
@@ -76,6 +78,7 @@ Peer.prototype._setupListeners = function () {
 }
 
 Peer.prototype._negotiate = function () {
+  console.log('Peer: _negotiate starting (createOffer)')
   var self = this
   var pc = this._pc
 
@@ -96,6 +99,7 @@ Peer.prototype._negotiate = function () {
 }
 
 Peer.prototype.signal = function (data) {
+  console.log('Peer: signal received', data.type || (data.candidate ? 'candidate' : 'unknown'))
   var self = this
   var pc = this._pc
 
