@@ -103,13 +103,20 @@ body {
   color: #00CED1;
 }
 
-#reset-btn {
+#controls {
   position: fixed;
-  bottom: 36px;
-  left: 36px;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  z-index: 100;
+}
+
+#controls #reset-btn {
   font-family: monospace;
-  font-size: 14px;
-  padding: 8px 16px;
+  font-size: 13px;
+  padding: 6px 14px;
   background: #333;
   color: #fff;
   border: 1px solid #555;
@@ -117,12 +124,30 @@ body {
   cursor: pointer;
 }
 
-#reset-btn:hover {
+#controls #reset-btn:hover {
   background: #c00;
 }
 
-#reset-btn.disabled {
+#controls #reset-btn.disabled {
   background: #666;
   cursor: default;
   opacity: 0.5;
+}
+
+#controls #server-toggle {
+  font-size: 13px;
+  color: #888;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+#controls #server-toggle input {
+  cursor: pointer;
+}
+
+#controls #server-toggle.active span {
+  color: #00CED1;
 }

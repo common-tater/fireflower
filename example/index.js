@@ -14,22 +14,38 @@ var Graph = require('./src/graph')
 var knumber = document.querySelector('#k-number input')
 knumber.addEventListener('change', onkchanged)
 
-var { remove } = require('firebase/database')
+// --- Controls ---
+var { remove, set, onValue } = require('firebase/database')
+
+// Reset button: disconnects node, clears Firebase data, prevents reconnect
 var resetBtn = document.querySelector('#reset-btn')
 resetBtn.addEventListener('click', function () {
   if (resetBtn.classList.contains('disabled')) return
   resetBtn.classList.add('disabled')
   resetBtn.textContent = 'Disconnected'
-
-  // Disconnect this node and prevent reconnection
   if (window.root) {
     window.root.disconnect()
   }
-
-  // Clear all Firebase data for the tree
-  var treePath = ref(firebase.db, 'tree')
   remove(ref(firebase.db, 'tree/requests'))
   remove(ref(firebase.db, 'tree/reports'))
+})
+
+// Server toggle: enables/disables the relay server via Firebase config
+var serverToggle = document.querySelector('#server-toggle')
+var serverCheckbox = serverToggle.querySelector('input')
+var configRef = ref(firebase.db, 'tree/configuration/serverEnabled')
+
+onValue(configRef, function (snapshot) {
+  var enabled = snapshot.val()
+  if (enabled === null) enabled = true
+  serverCheckbox.checked = enabled
+  serverToggle.classList.toggle('active', enabled)
+})
+
+serverCheckbox.addEventListener('change', function () {
+  var enabled = serverCheckbox.checked
+  serverToggle.classList.toggle('active', enabled)
+  set(configRef, enabled)
 })
 
 // Check if a root node already exists before deciding to be root

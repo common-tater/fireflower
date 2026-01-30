@@ -801,6 +801,10 @@ Node.prototype._onreportNeeded = function () {
     report.root = true
   }
 
+  if (this.isServer) {
+    report.isServer = true
+  }
+
   if (this.reportData) {
     report.data = this.reportData
   }
