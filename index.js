@@ -40,6 +40,7 @@ function Node (path, opts) {
   this.upstream = null
   this.downstream = {}
   this.blacklist = new Blacklist()
+  this._transport = null
 
   // firebase refs
   this._ref = firebase.ref(database, this.path)
@@ -89,6 +90,12 @@ Object.defineProperty(Node.prototype, 'K', {
       }
     }
     this._reviewRequests()
+  }
+})
+
+Object.defineProperty(Node.prototype, 'transport', {
+  get: function () {
+    return this._transport
   }
 })
 
@@ -479,6 +486,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   }
 
   this.upstream = peer
+  this._transport = 'p2p'
 
   // change state -> connected
   debug(this.id + ' established upstream connection to ' + peer.id)
