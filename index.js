@@ -7,6 +7,7 @@ var debug = require('debug')('fireflower')
 var events = require('events')
 var inherits = require('inherits')
 var Peer = require('./peer')
+var ServerTransport = require('./server-transport')
 var Blacklist = require('./blacklist')
 var firebase = require('firebase/database')
 
@@ -41,6 +42,12 @@ function Node (path, opts) {
   this.downstream = {}
   this.blacklist = new Blacklist()
   this._transport = null
+
+  // server fallback options
+  this.serverUrl = this.opts.serverUrl || null
+  this.serverFallback = this.opts.serverFallback || false
+  this.maxP2PRetries = this.opts.maxP2PRetries || 2
+  this._p2pRetries = 0
 
   // firebase refs
   this._ref = firebase.ref(database, this.path)
@@ -441,6 +448,77 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   }, this.connectionTimeout)
 }
 
+Node.prototype._connectViaServer = function () {
+  var self = this
+
+  // Emit fallback event
+  this.emit('fallback')
+
+  // Change state
+  this.state = 'connecting'
+  this.emit('statechange')
+
+  // Get server URL (from opts or Firebase registry)
+  if (!this.serverUrl) {
+    // TODO: In future, look up available servers from Firebase servers/ path
+    // For now, require explicit serverUrl in opts
+    debug(this.id + ' server fallback enabled but no serverUrl provided')
+    this.emit('error', new Error('Server fallback enabled but no serverUrl configured'))
+    return
+  }
+
+  debug(this.id + ' connecting to relay server: ' + this.serverUrl)
+
+  // Create ServerTransport
+  var transport = new ServerTransport({
+    url: this.serverUrl,
+    nodeId: this.id,
+    initiator: true
+  })
+
+  // The server will assign its own ID via the connect handshake
+  // For now, use a placeholder
+  transport.id = '__relay__'
+
+  // Set up notifications channel (we're the initiator/client)
+  transport.notifications = transport.createDataChannel('notifications')
+  transport.notifications.onopen = function () {
+    debug(self.id + ' server notifications channel opened')
+    self._updateMask({
+      mask: self._mask || self.id,
+      level: self._level || 0
+    })
+  }
+
+  // Handle connect event
+  transport.on('connect', function () {
+    debug(self.id + ' connected to relay server')
+    transport.didConnect = true
+    self._transport = 'server'
+    self._onupstreamConnect(transport)
+  })
+
+  // Handle close event
+  transport.on('close', function () {
+    debug(self.id + ' relay server connection closed')
+    self._onupstreamDisconnect(transport)
+  })
+
+  // Handle error event
+  transport.on('error', function (err) {
+    debug(self.id + ' relay server error: ' + (err.message || err))
+  })
+
+  // Connection timeout
+  this._setTimeout(function () {
+    if (!transport.didConnect) {
+      debug(self.id + ' relay server connection timed out')
+      transport.didTimeout = true
+      transport.close()
+    }
+  }, this.connectionTimeout)
+}
+
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   console.log('UseFireflower: _onpeerConnect', peer.id)
   peer.didConnect = true
@@ -487,6 +565,7 @@ Node.prototype._onupstreamConnect = function (peer) {
 
   this.upstream = peer
   this._transport = 'p2p'
+  this._p2pRetries = 0  // Reset retry counter on successful P2P connection
 
   // change state -> connected
   debug(this.id + ' established upstream connection to ' + peer.id)
@@ -508,6 +587,10 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   }
 
   this.upstream = null
+
+  // Save previous transport type for reconnection logic
+  var previousTransport = this._transport
+  this._transport = null
 
   // change state -> disconnected
   if (this.state !== 'disconnected') {
@@ -533,11 +616,33 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 
     // give our mask update a head start and/or wait longer if we timed out
     var self = this
+    var delay = peer.didConnect ? 100 : this.connectionTimeout
+
     this._setTimeout(function () {
       if (!self._preventReconnect) {
-        self.connect()
+        // If we were on server and it disconnected, reset P2P retries and try P2P again
+        if (previousTransport === 'server') {
+          debug(self.id + ' server connection lost, attempting P2P reconnection')
+          self._p2pRetries = 0
+          self.connect()
+        }
+        // If we were on P2P or never connected
+        else {
+          // Increment retry counter for P2P connections
+          self._p2pRetries = (self._p2pRetries || 0) + 1
+          debug(self.id + ' P2P retry count: ' + self._p2pRetries + '/' + self.maxP2PRetries)
+
+          // Check if we should fall back to server
+          if (self._p2pRetries > self.maxP2PRetries && self.serverFallback) {
+            debug(self.id + ' P2P retries exceeded, falling back to server')
+            self._connectViaServer()
+          } else {
+            // Continue trying P2P
+            self.connect()
+          }
+        }
       }
-    }, peer.didConnect ? 100 : this.connectionTimeout)
+    }, delay)
   }
 }
 
