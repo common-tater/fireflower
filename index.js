@@ -629,7 +629,11 @@ Node.prototype._attemptUpgrade = function () {
     self._connectToPeer(false, response.id, null, response.ref)
 
     // Close server after initiating P2P (so we don't re-enter requesting state)
-    if (serverUpstream) serverUpstream.close()
+    // Remove listeners first to prevent _onpeerDisconnect from firing
+    if (serverUpstream) {
+      serverUpstream.removeAllListeners()
+      serverUpstream.close()
+    }
   }
 
   firebase.onChildAdded(upgradeResponsesRef, onUpgradeResponse)
