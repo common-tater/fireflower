@@ -103,6 +103,19 @@ body {
   color: #00CED1;
 }
 
+#graph #nodes .node.server-node #circle {
+  background-color: rgba(68, 221, 68, 0.5);
+  border: 2px solid rgba(40, 160, 40, 0.9);
+  border-radius: 20px;
+  cursor: auto;
+  width: 40px;
+  height: 40px;
+}
+
+#graph #nodes .node.server-node #label {
+  color: #44DD44;
+}
+
 #controls {
   position: fixed;
   top: 20px;
@@ -134,7 +147,8 @@ body {
   opacity: 0.5;
 }
 
-#controls #server-toggle {
+#controls #server-toggle,
+#controls #force-server-toggle {
   font-size: 13px;
   color: #888;
   cursor: pointer;
@@ -144,10 +158,15 @@ body {
   user-select: none;
 }
 
-#controls #server-toggle input {
+#controls #server-toggle input,
+#controls #force-server-toggle input {
   cursor: pointer;
 }
 
 #controls #server-toggle.active span {
   color: #00CED1;
+}
+
+#controls #force-server-toggle.active span {
+  color: #44DD44;
 }

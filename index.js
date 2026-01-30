@@ -47,6 +47,7 @@ function Node (path, opts) {
   // server node options
   this.isServer = this.opts.isServer || false
   this.serverUrl = this.opts.serverUrl || null
+  this.serverOnly = this.opts.serverOnly || false
   this.p2pUpgradeInterval = this.opts.p2pUpgradeInterval || 30000
   this._upgradeTimer = null
   this._pendingAdapters = {}
@@ -373,8 +374,8 @@ Node.prototype._reviewResponses = function () {
     candidates[response.id] = response
   }
 
-  // Prefer P2P root over server root
-  if (p2pRoots.length) {
+  // Prefer P2P root over server root (unless serverOnly mode)
+  if (!this.serverOnly && p2pRoots.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
     console.log('UseFireflower: accepting P2P root response', p2pRoots[0])
     this._acceptResponse(p2pRoots[0])
@@ -382,23 +383,25 @@ Node.prototype._reviewResponses = function () {
     return
   }
 
-  // Try non-root candidates sorted by level
-  var sorted = []
-  for (var j in candidates) {
-    if (!candidates[candidates[j].upstream]) {
-      sorted.push(candidates[j])
+  // Try non-root candidates sorted by level (skip in serverOnly mode)
+  if (!this.serverOnly) {
+    var sorted = []
+    for (var j in candidates) {
+      if (!candidates[candidates[j].upstream]) {
+        sorted.push(candidates[j])
+      }
     }
-  }
-  sorted.sort(function (a, b) {
-    return a.level - b.level
-  })
+    sorted.sort(function (a, b) {
+      return a.level - b.level
+    })
 
-  if (sorted.length) {
-    firebase.off(this._responsesRef, 'child_added', this._onresponse)
-    console.log('UseFireflower: accepting sorted response', sorted[0])
-    this._acceptResponse(sorted[0])
-    delete this._responses
-    return
+    if (sorted.length) {
+      firebase.off(this._responsesRef, 'child_added', this._onresponse)
+      console.log('UseFireflower: accepting sorted response', sorted[0])
+      this._acceptResponse(sorted[0])
+      delete this._responses
+      return
+    }
   }
 
   // Fall back to server root if available

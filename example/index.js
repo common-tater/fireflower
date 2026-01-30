@@ -48,6 +48,16 @@ serverCheckbox.addEventListener('change', function () {
   set(configRef, enabled)
 })
 
+// Force Server toggle: new clicked nodes only accept server responses
+var forceServerToggle = document.querySelector('#force-server-toggle')
+var forceServerCheckbox = forceServerToggle.querySelector('input')
+forceServerCheckbox.addEventListener('change', function () {
+  forceServerToggle.classList.toggle('active', forceServerCheckbox.checked)
+  if (window.graph) {
+    window.graph.forceServer = forceServerCheckbox.checked
+  }
+})
+
 // Check if a root node already exists before deciding to be root
 var treeRef = ref(firebase.db, 'tree/reports')
 get(treeRef).then(function(snapshot) {
@@ -59,7 +69,7 @@ get(treeRef).then(function(snapshot) {
     var now = Date.now()
     for (var id in reports) {
       var report = reports[id]
-      if (report.root && report.timestamp && (now - report.timestamp) < 10000) {
+      if (report.root && !report.isServer && report.timestamp && (now - report.timestamp) < 10000) {
         // Active root exists, we should connect as a child
         isRoot = false
         console.log('Found active root node:', id)
