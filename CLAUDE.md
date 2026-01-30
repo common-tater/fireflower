@@ -89,11 +89,47 @@ cd visualizer && npm run build  # builds visualizer/share/build.js
 
 ```bash
 # Terminal 1: Example app (port 8080)
-npx http-server example -p 8080
+node example/server.js
 
 # Terminal 2: Visualizer (port 8081)
-npx http-server visualizer/share -p 8081
+cd visualizer && npm start
 
 # Terminal 3: Relay server (port 8082)
 node relay-server.js
 ```
+
+## Testing
+
+Automated test suite using Puppeteer that runs 12 scenarios with a visible browser:
+
+```bash
+npm test           # Run all 12 scenarios
+node test/run.js 3 # Run only scenario 3
+```
+
+The test runner:
+1. Builds the example app
+2. Starts the example server (port 8080) and relay server (port 8082) as child processes
+3. Launches Chrome with `headless: false` so you can watch the 2D visualizer
+4. Runs each scenario sequentially with automatic reset between them
+5. Reports pass/fail for each scenario
+
+Open the 3D visualizer at `http://localhost:8081` in a separate tab to watch both views.
+
+### Test files
+- `test/run.js` — Main test runner with all 12 scenarios
+- `test/helpers.js` — Shared utilities (addNodes, waitForAllConnected, setK, etc.)
+
+### Scenarios
+1. Basic P2P Tree (K=2) — 6 nodes, all P2P
+2. Server Fallback — nodes connect with relay server available
+3. Force Server Mode — all nodes use server transport
+4. Force Server OFF → P2P Upgrade — server nodes upgrade to P2P
+5. Server Toggle OFF → P2P Reconnect — server-connected nodes switch to P2P
+6. Rapid Joins (K=2) — 8 nodes added quickly
+7. K Change Mid-Session — K=2→4 with nodes
+8. Node Departure & Recovery — mid-tree node removal
+9. Mixed Transport Tree — some server, some P2P
+10. Large Tree (K=3) — 12 nodes
+11. Server Restart Recovery — kill and restart relay server
+12. Disconnect All & Reconnect — remove and re-add nodes
