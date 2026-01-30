@@ -47,7 +47,10 @@ function Node (path, opts) {
   this.serverUrl = this.opts.serverUrl || null
   this.serverFallback = this.opts.serverFallback || false
   this.maxP2PRetries = this.opts.maxP2PRetries || 2
+  this.p2pUpgradeInterval = this.opts.p2pUpgradeInterval || 30000
   this._p2pRetries = 0
+  this._upgradeTimer = null
+  this._wasOnServer = false
 
   // firebase refs
   this._ref = firebase.ref(database, this.path)
@@ -451,8 +454,10 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
 Node.prototype._connectViaServer = function () {
   var self = this
 
-  // Emit fallback event
-  this.emit('fallback')
+  // Emit fallback event (suppress if this is a re-fallback after failed upgrade)
+  if (!this._wasOnServer) {
+    this.emit('fallback')
+  }
 
   // Change state
   this.state = 'connecting'
@@ -498,6 +503,9 @@ Node.prototype._connectViaServer = function () {
     transport.didConnect = true
     self._transport = 'server'
     self._onupstreamConnect(transport)
+
+    // Start periodic P2P upgrade attempts
+    self._startUpgradeTimer()
   })
 
   // Handle close event
@@ -519,6 +527,37 @@ Node.prototype._connectViaServer = function () {
       transport.close()
     }
   }, this.connectionTimeout)
+}
+
+Node.prototype._startUpgradeTimer = function () {
+  this._stopUpgradeTimer()
+
+  if (!this.serverFallback || !this.p2pUpgradeInterval) return
+
+  var self = this
+  this._upgradeTimer = this._setTimeout(function () {
+    self._tryP2PUpgrade()
+  }, this.p2pUpgradeInterval)
+}
+
+Node.prototype._stopUpgradeTimer = function () {
+  if (this._upgradeTimer) {
+    this._clearTimeout(this._upgradeTimer)
+    this._upgradeTimer = null
+  }
+}
+
+Node.prototype._tryP2PUpgrade = function () {
+  if (this._transport !== 'server' || this.state !== 'connected') return
+
+  debug(this.id + ' attempting P2P upgrade from server')
+  this._wasOnServer = true
+
+  // Close server transport to trigger reconnection via P2P
+  // _onupstreamDisconnect will detect previousTransport === 'server',
+  // reset _p2pRetries to 0, and call connect() for a P2P attempt.
+  // If P2P fails after maxP2PRetries, it falls back to server again.
+  this.upstream.close()
 }
 
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
@@ -555,8 +594,10 @@ Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
 }
 
 Node.prototype._onupstreamConnect = function (peer) {
-  // remove our request
-  firebase.remove(this._requestRef)
+  // remove our request (may not exist for server transport connections)
+  if (this._requestRef) {
+    firebase.remove(this._requestRef)
+  }
 
   // already got connected by someone else
   if (this.state === 'connected') {
@@ -575,6 +616,14 @@ Node.prototype._onupstreamConnect = function (peer) {
   // Reset retry counter on successful P2P connection
   if (this._transport === 'p2p') {
     this._p2pRetries = 0
+    this._stopUpgradeTimer()
+
+    // Emit upgrade if we transitioned from server to P2P
+    if (this._wasOnServer) {
+      this._wasOnServer = false
+      debug(this.id + ' upgraded from server to P2P')
+      this.emit('upgrade')
+    }
   }
 
   // change state -> connected
@@ -601,6 +650,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   // Save previous transport type for reconnection logic
   var previousTransport = this._transport
   this._transport = null
+  this._stopUpgradeTimer()
 
   // change state -> disconnected
   if (this.state !== 'disconnected') {
