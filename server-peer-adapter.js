@@ -16,11 +16,12 @@ inherits(ServerPeerAdapter, EventEmitter)
  * Created in a "pending" state without a WebSocket. Call wireUp(ws) once the
  * client's WebSocket connection arrives.
  */
-function ServerPeerAdapter (peerId) {
-  if (!(this instanceof ServerPeerAdapter)) return new ServerPeerAdapter(peerId)
+function ServerPeerAdapter (peerId, serverNodeId) {
+  if (!(this instanceof ServerPeerAdapter)) return new ServerPeerAdapter(peerId, serverNodeId)
   EventEmitter.call(this)
 
   this.id = peerId
+  this._serverNodeId = serverNodeId || '__relay__'
   this.initiator = true
   this.didConnect = false
   this.transportType = 'server'
@@ -60,8 +61,8 @@ ServerPeerAdapter.prototype.wireUp = function (ws) {
     if (!self._closed) self.emit('error', err)
   })
 
-  // Acknowledge the client's connection
-  this._send({ type: 'connect', id: '__relay__' })
+  // Acknowledge the client's connection with the server node's actual ID
+  this._send({ type: 'connect', id: this._serverNodeId })
 
   // Mark as connected
   this.didConnect = true

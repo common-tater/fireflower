@@ -47,7 +47,7 @@ GraphView.prototype.render = function () {
   root.x = this.width / 2
   root.y = this.height / 2
 
-  // Position server node at fixed location
+  // Position server node at fixed location and draw connection to root
   if (this.serverNode) {
     this.serverNode.x = 120
     this.serverNode.y = this.height / 2
@@ -56,6 +56,16 @@ GraphView.prototype.render = function () {
       this.nodesEl.appendChild(this.serverNode.el)
     }
     this.serverNode.render()
+
+    // Draw connection line from server to root
+    var scale = isRetina ? 2 : 1
+    this.context.beginPath()
+    this.context.moveTo(root.x * scale, root.y * scale)
+    this.context.lineTo(this.serverNode.x * scale, this.serverNode.y * scale)
+    this.context.lineWidth = 2 * window.devicePixelRatio
+    this.context.lineCap = 'round'
+    this.context.strokeStyle = 'rgba(68, 221, 68, 0.7)'
+    this.context.stroke()
   }
 
   for (var i in this.nodes) {
@@ -91,21 +101,29 @@ GraphView.prototype._watchServerNode = function (path) {
         foundServer = true
         if (!self.serverNode || self.serverNode.serverId !== id) {
           self._removeServerNode()
-          // Create a minimal server node element
           var el = document.createElement('div')
           el.className = 'node server-node'
-          el.innerHTML = '<div id="circle"></div><div id="label">SERVER</div>'
+          el.innerHTML = '<div id="circle"></div><div id="label">SERVER</div><div id="status"></div>'
           self.serverNode = {
             el: el,
             serverId: id,
             x: 120,
             y: 0,
+            report: report,
             render: function () {
               this.el.style.left = this.x + 'px'
               this.el.style.top = this.y + 'px'
             }
           }
         }
+        // Update report data each tick
+        self.serverNode.report = report
+        var statusEl = self.serverNode.el.querySelector('#status')
+        var level = report.level != null ? report.level : '?'
+        var transport = report.transport || '?'
+        var health = report.health
+        var scoreText = health ? ' \u2764 ' + health.score : ''
+        statusEl.textContent = 'L' + level + ' ' + transport + scoreText
         break
       }
     }
@@ -126,7 +144,7 @@ GraphView.prototype._removeServerNode = function () {
 }
 
 GraphView.prototype.add = function (opts) {
-  var nodeOpts = { reportInterval: 2500 }
+  var nodeOpts = { reportInterval: 2500, K: this.K || 2 }
   if (opts) {
     for (var k in opts) nodeOpts[k] = opts[k]
   }

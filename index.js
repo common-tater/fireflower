@@ -52,6 +52,13 @@ function Node (path, opts) {
   this._upgradeTimer = null
   this._pendingAdapters = {}
 
+  // health tracking
+  this._connectedAt = null
+  this._reconnectTimes = []  // timestamps of recent disconnects
+
+  // dedup: track request IDs we've already responded to
+  this._respondedRequests = {}
+
   // firebase refs
   this._ref = firebase.ref(database, this.path)
   this._configRef = firebase.child(this._ref, 'configuration')
@@ -205,6 +212,7 @@ Node.prototype._doconnect = function () {
     this._setTimeout(function () {
       // change state -> connected
       debug(self.id + ' connected as root')
+      self._connectedAt = Date.now()
       self.state = 'connected'
       self.emit('statechange')
 
@@ -223,7 +231,7 @@ Node.prototype._doconnect = function () {
 }
 
 Node.prototype._dorequest = function () {
-  console.log('UseFireflower: _dorequest', this.id)
+  debug(this.id + ' requesting connection')
   var self = this
 
   this._requestRef = firebase.push(this._requestsRef, {
@@ -264,7 +272,7 @@ Node.prototype._onrequest = function (snapshot) {
   var requestRef = snapshot.ref
   var requestId = snapshot.key
   var request = snapshot.val()
-  console.log('UseFireflower: _onrequest from', requestId, request, 'myId:', this.id)
+  debug(this.id + ' saw request ' + requestId + ' from ' + peerId)
   var peerId = request.id
 
   // responders may accidentally recreate requests
@@ -274,8 +282,14 @@ Node.prototype._onrequest = function (snapshot) {
     return
   }
 
-  // prevent circles
-  if (peerId === this._mask) {
+  // prevent circles and self-connections
+  if (peerId === this._mask || peerId === this.id) {
+    return
+  }
+
+  // deduplicate: skip if we already responded to this exact request
+  if (this._respondedRequests[requestId]) {
+    debug(this.id + ' dedup skipping request ' + requestId)
     return
   }
 
@@ -302,13 +316,17 @@ Node.prototype._onrequest = function (snapshot) {
   // we have to do this before actually writing our response because
   // firebase can trigger events in the same tick which could circumvent
   // the K check at the top of this method
+  // Track that we've responded to this request to prevent duplicates
+  this._respondedRequests[requestId] = true
+
   var transportOpts = this.isServer ? { transport: 'server', serverUrl: this.serverUrl } : null
   this._connectToPeer(true, peerId, requestId, responseRef, transportOpts)
 
   // publish response
   var response = {
     level: this._level || 0,
-    upstream: this.upstream ? this.upstream.id : null
+    upstream: this.upstream ? this.upstream.id : null,
+    health: this._getHealthScore()
   }
   if (this.isServer) {
     response.transport = 'server'
@@ -316,15 +334,10 @@ Node.prototype._onrequest = function (snapshot) {
   }
   firebase.update(responseRef, response)
 
-  // watch for request withdrawal
-  var unsubWithdraw = firebase.onChildRemoved(responseRef, function () {
-    unsubWithdraw()
-    var peer = self.downstream[peerId]
-    if (peer && !peer.didConnect) {
-      peer.requestWithdrawn = true
-      peer.close()
-    }
-  })
+  // Note: withdrawal detection is handled by ICE failure and connection timeout.
+  // We previously watched onChildRemoved(responseRef) here, but when the requester
+  // removes its request after connecting, Firebase cascades the removal synchronously,
+  // killing the downstream peer before its ICE can finish connecting.
 }
 
 Node.prototype._onresponse = function (snapshot) {
@@ -372,7 +385,7 @@ Node.prototype._reviewResponses = function () {
   // Accept P2P root (unless serverOnly mode)
   if (!this.serverOnly && p2pRoots.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
-    console.log('UseFireflower: accepting P2P root response', p2pRoots[0])
+    debug(this.id + ' accepting P2P root response')
     this._acceptResponse(p2pRoots[0])
     delete this._responses
     return
@@ -392,12 +405,25 @@ Node.prototype._reviewResponses = function () {
     }
   }
 
-  p2pCandidates.sort(function (a, b) { return a.level - b.level })
-  serverCandidates.sort(function (a, b) { return a.level - b.level })
+  // Sort by health score (higher = better), fall back to level (lower = better)
+  // Only let health override level when there's a clear difference (>20 points)
+  // and both candidates have reported health scores
+  function healthSort (a, b) {
+    var aHealth = a.health || 0
+    var bHealth = b.health || 0
+    // Only use health if both have reported a score
+    if (aHealth > 0 && bHealth > 0) {
+      var healthDiff = bHealth - aHealth
+      if (Math.abs(healthDiff) > 20) return healthDiff
+    }
+    return a.level - b.level
+  }
+  p2pCandidates.sort(healthSort)
+  serverCandidates.sort(healthSort)
 
   if (!this.serverOnly && p2pCandidates.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
-    console.log('UseFireflower: accepting P2P candidate response', p2pCandidates[0])
+    debug(this.id + ' accepting P2P candidate response')
     this._acceptResponse(p2pCandidates[0])
     delete this._responses
     return
@@ -405,7 +431,7 @@ Node.prototype._reviewResponses = function () {
 
   if (serverCandidates.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
-    console.log('UseFireflower: accepting server candidate response', serverCandidates[0])
+    debug(this.id + ' accepting server candidate response')
     this._acceptResponse(serverCandidates[0])
     delete this._responses
     return
@@ -419,7 +445,7 @@ Node.prototype._acceptResponse = function (response) {
 
   // change state -> connecting (this prevents accepting multiple responses)
   debug(this.id + ' got response from ' + peerId)
-  console.log('UseFireflower: _acceptResponse from', peerId, response)
+  debug(this.id + ' accepted response from ' + peerId)
   this.state = 'connecting'
   this.emit('statechange')
 
@@ -443,7 +469,7 @@ Node.prototype._createTransport = function (initiator, peerId, transportOpts) {
   if (transportOpts && transportOpts.transport === 'server') {
     if (initiator && this.isServer) {
       // Server-side: create a pending adapter that gets wired up when client connects via WebSocket
-      var adapter = new ServerPeerAdapter(peerId)
+      var adapter = new ServerPeerAdapter(peerId, this.id)
       this._pendingAdapters[peerId] = adapter
       return adapter
     } else if (!initiator && transportOpts.serverUrl) {
@@ -475,11 +501,19 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
 
   if (initiator) {
     this.downstream[peer.id] = peer
+    // Create all data channels BEFORE negotiation so they're included in the SDP offer
+    if (!isServerTransport) {
+      peer.createDataChannel('_default', peer.channelConfig)
+    }
     peer.notifications = peer.createDataChannel('notifications')
     peer.notifications.onopen = function () {
+      peer.didConnect = true
       self._onnotificationsOpen(peer)
     }
     peer.requestId = requestId
+    if (!isServerTransport) {
+      peer.negotiate()
+    }
   } else {
     peer.on('datachannel', function (channel) {
       if (channel.label === 'notifications') {
@@ -520,7 +554,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   // timeout connections
   this._setTimeout(function () {
     if (!peer.didConnect) {
-      debug(self.id + ' connection to ' + peer.id + ' timed out')
+      debug(self.id + ' connection timeout -> ' + peer.id)
       peer.didTimeout = true
       peer.close()
     }
@@ -596,7 +630,7 @@ Node.prototype._attemptUpgrade = function () {
 }
 
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
-  console.log('UseFireflower: _onpeerConnect', peer.id)
+  debug(this.id + ' peer connected: ' + peer.id)
   peer.didConnect = true
   peer.removeAllListeners('connect')
   peer.removeAllListeners('signal')
@@ -645,6 +679,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   var previousTransport = this._transport
   this.upstream = peer
   this._transport = peer.transportType || 'p2p'
+  this._connectedAt = Date.now()
 
   // Upgraded from server to P2P
   if (previousTransport === 'server' && this._transport === 'p2p') {
@@ -653,8 +688,8 @@ Node.prototype._onupstreamConnect = function (peer) {
     this.emit('upgrade')
   }
 
-  // Start P2P upgrade timer when connected via server
-  if (this._transport === 'server' && this.p2pUpgradeInterval) {
+  // Start P2P upgrade timer when connected via server (skip if serverOnly)
+  if (this._transport === 'server' && this.p2pUpgradeInterval && !this.serverOnly) {
     this._stopUpgradeTimer()
     var self = this
     this._upgradeTimer = this._setTimeout(function () {
@@ -674,6 +709,7 @@ Node.prototype._onupstreamConnect = function (peer) {
 }
 
 Node.prototype._onupstreamDisconnect = function (peer) {
+  debug(this.id + ' lost upstream ' + peer.id)
   // stop responding to new requests
   firebase.off(this._requestsRef, 'child_added', this._onrequest)
 
@@ -684,6 +720,8 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 
   this.upstream = null
   this._transport = null
+  this._connectedAt = null
+  this._reconnectTimes.push(Date.now())
   this._stopUpgradeTimer()
 
   // change state -> disconnected
@@ -791,11 +829,71 @@ Node.prototype._updateMask = function (data) {
   }
 }
 
+Node.prototype._getHealthScore = function () {
+  var now = Date.now()
+  var downstreamCount = Object.keys(this.downstream).length
+  var K = this.opts.K || 2
+
+  // uptime: 30 points, linear ramp over 60 seconds
+  var uptime = this._connectedAt ? (now - this._connectedAt) / 1000 : 0
+  var uptimeScore = Math.min(uptime / 60, 1) * 30
+
+  // stability: 30 points, -10 per recent reconnect (last 2 minutes)
+  var recentWindow = 120000
+  var recentReconnects = 0
+  for (var i = this._reconnectTimes.length - 1; i >= 0; i--) {
+    if (now - this._reconnectTimes[i] < recentWindow) {
+      recentReconnects++
+    } else {
+      break
+    }
+  }
+  var stabilityScore = Math.max(30 - recentReconnects * 10, 0)
+
+  // load: 20 points, inversely proportional to downstream usage
+  var loadScore = 20 * (1 - downstreamCount / K)
+
+  // level: 20 points, closer to root is better (cap at level 5)
+  var level = this._level || 0
+  var levelScore = 20 * (1 - Math.min(level, 5) / 5)
+
+  // root always gets full uptime and stability since it has no upstream
+  if (this.root) {
+    uptimeScore = 30
+    stabilityScore = 30
+  }
+
+  return Math.round(uptimeScore + stabilityScore + loadScore + levelScore)
+}
+
+Node.prototype._getHealthData = function () {
+  var now = Date.now()
+  var downstreamCount = Object.keys(this.downstream).length
+  var recentWindow = 120000
+  var recentReconnects = 0
+  for (var i = this._reconnectTimes.length - 1; i >= 0; i--) {
+    if (now - this._reconnectTimes[i] < recentWindow) {
+      recentReconnects++
+    } else {
+      break
+    }
+  }
+  return {
+    score: this._getHealthScore(),
+    uptime: this._connectedAt ? Math.round((now - this._connectedAt) / 1000) : 0,
+    reconnects: recentReconnects,
+    load: parseFloat((downstreamCount / (this.opts.K || 2)).toFixed(2)),
+    level: this._level || 0,
+    downstreamCount: downstreamCount
+  }
+}
+
 Node.prototype._onreportNeeded = function () {
   var report = {
     state: this.state,
     upstream: this.upstream ? this.upstream.id : null,
     transport: this._transport,
+    level: this._level || 0,
     timestamp: firebase.serverTimestamp()
   }
 
@@ -806,6 +904,8 @@ Node.prototype._onreportNeeded = function () {
   if (this.isServer) {
     report.isServer = true
   }
+
+  report.health = this._getHealthData()
 
   if (this.reportData) {
     report.data = this.reportData
