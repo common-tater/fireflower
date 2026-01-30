@@ -282,12 +282,15 @@ Node.prototype._onrequest = function (snapshot) {
   // it is possible to see a peer we know about
   var knownPeer = this.downstream[peerId]
   if (knownPeer) {
-    if (knownPeer.requestId !== requestId) {
-      // if request ids don't match, the peer must have disconnected without us noticing
-      knownPeer.close()
-    } else {
+    if (knownPeer.requestId === requestId) {
       return
     }
+    // if peer is already connected, this is likely an upgrade request — skip it
+    if (knownPeer.didConnect) {
+      return
+    }
+    // request ids don't match and peer never connected — must have disconnected without us noticing
+    knownPeer.close()
   }
 
   debug(this.id + ' saw request by ' + peerId)
@@ -616,11 +619,12 @@ Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
     peer._unsubRemoteSignals = null
   }
 
-  if (this.downstream[peer.id]) {
+  if (this.downstream[peer.id] === peer) {
     this._ondownstreamDisconnect(peer)
-  } else {
+  } else if (this.upstream === peer) {
     this._onupstreamDisconnect(peer)
   }
+  // else: stale peer (replaced by a newer connection), ignore
 }
 
 Node.prototype._onupstreamConnect = function (peer) {
