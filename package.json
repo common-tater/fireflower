@@ -12,6 +12,9 @@
   "devDependencies": {
     "esbuild": "^0.24.0"
   },
+  "optionalDependencies": {
+    "ws": "^8.18.0"
+  },
   "scripts": {
     "build": "esbuild example/index.js --bundle --outfile=example/build.js --platform=browser --sourcemap",
     "example": "npm run build && node example/server.js",
