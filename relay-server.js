@@ -15,6 +15,7 @@
  */
 
 var WebSocketServer = require('ws').Server
+var wrtc = require('node-datachannel/polyfill')
 
 // Parse command line arguments
 var args = process.argv.slice(2)
@@ -49,14 +50,15 @@ try {
 var firebase = firebaseInit.init(firebaseConfig)
 var serverUrl = 'ws://0.0.0.0:' + port
 
-// Create the Node — it's a proper tree participant
+// Create the Node — connects as a child of the root via WebRTC
 var fireflower = require('./')(firebase.db)
 var node = fireflower(firebasePath, {
-  root: true,
+  root: false,
   isServer: true,
   K: 1000,
   serverUrl: serverUrl,
   reportInterval: 5000,
+  wrtc: wrtc,
   setTimeout: setTimeout.bind(global),
   clearTimeout: clearTimeout.bind(global)
 })
@@ -77,7 +79,9 @@ wss.on('listening', function () {
 })
 
 node.on('connect', function () {
-  console.log('Node connected as root, watching for requests...')
+  console.log('Node connected to tree as child (level 1)')
+  console.log('Upstream:', node.upstream ? node.upstream.id : 'none')
+  console.log('Transport:', node.transport)
 })
 
 wss.on('connection', function (ws) {

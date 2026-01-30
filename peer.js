@@ -17,7 +17,8 @@ function Peer (opts) {
   this.transportType = 'p2p'
   this._closed = false
 
-  this._pc = new RTCPeerConnection(this.config)
+  var PeerConnection = (opts.wrtc && opts.wrtc.RTCPeerConnection) || RTCPeerConnection
+  this._pc = new PeerConnection(this.config)
   this._setupListeners()
 
   if (this.initiator) {

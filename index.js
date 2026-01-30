@@ -349,7 +349,6 @@ Node.prototype._reviewResponses = function () {
   }
 
   var p2pRoots = []
-  var serverRoots = []
   var candidates = {}
 
   for (var i in this._responses) {
@@ -363,18 +362,14 @@ Node.prototype._reviewResponses = function () {
     }
 
     if (!response.upstream) {
-      if (response.transport === 'server') {
-        serverRoots.push(response)
-      } else {
-        p2pRoots.push(response)
-      }
+      p2pRoots.push(response)
       continue
     }
 
     candidates[response.id] = response
   }
 
-  // Prefer P2P root over server root (unless serverOnly mode)
+  // Accept P2P root (unless serverOnly mode)
   if (!this.serverOnly && p2pRoots.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
     console.log('UseFireflower: accepting P2P root response', p2pRoots[0])
@@ -383,32 +378,35 @@ Node.prototype._reviewResponses = function () {
     return
   }
 
-  // Try non-root candidates sorted by level (skip in serverOnly mode)
-  if (!this.serverOnly) {
-    var sorted = []
-    for (var j in candidates) {
-      if (!candidates[candidates[j].upstream]) {
-        sorted.push(candidates[j])
-      }
-    }
-    sorted.sort(function (a, b) {
-      return a.level - b.level
-    })
+  // Split non-root candidates into P2P and server, prefer P2P
+  var p2pCandidates = []
+  var serverCandidates = []
 
-    if (sorted.length) {
-      firebase.off(this._responsesRef, 'child_added', this._onresponse)
-      console.log('UseFireflower: accepting sorted response', sorted[0])
-      this._acceptResponse(sorted[0])
-      delete this._responses
-      return
+  for (var j in candidates) {
+    var c = candidates[j]
+    if (candidates[c.upstream]) continue // skip if upstream also responded
+    if (c.transport === 'server') {
+      serverCandidates.push(c)
+    } else {
+      p2pCandidates.push(c)
     }
   }
 
-  // Fall back to server root if available
-  if (serverRoots.length) {
+  p2pCandidates.sort(function (a, b) { return a.level - b.level })
+  serverCandidates.sort(function (a, b) { return a.level - b.level })
+
+  if (!this.serverOnly && p2pCandidates.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
-    console.log('UseFireflower: accepting server root response', serverRoots[0])
-    this._acceptResponse(serverRoots[0])
+    console.log('UseFireflower: accepting P2P candidate response', p2pCandidates[0])
+    this._acceptResponse(p2pCandidates[0])
+    delete this._responses
+    return
+  }
+
+  if (serverCandidates.length) {
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
+    console.log('UseFireflower: accepting server candidate response', serverCandidates[0])
+    this._acceptResponse(serverCandidates[0])
     delete this._responses
     return
   }
@@ -463,7 +461,8 @@ Node.prototype._createTransport = function (initiator, peerId, transportOpts) {
     initiator: initiator,
     trickle: this.opts.peerConfig ? this.opts.peerConfig.trickle : undefined,
     config: this.opts.peerConfig,
-    channelConfig: this.opts.channelConfig
+    channelConfig: this.opts.channelConfig,
+    wrtc: this.opts.wrtc
   })
 }
 
