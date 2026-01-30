@@ -463,6 +463,8 @@ Node.prototype._connectViaServer = function () {
     // TODO: In future, look up available servers from Firebase servers/ path
     // For now, require explicit serverUrl in opts
     debug(this.id + ' server fallback enabled but no serverUrl provided')
+    this.state = 'disconnected'
+    this.emit('statechange')
     this.emit('error', new Error('Server fallback enabled but no serverUrl configured'))
     return
   }
@@ -564,8 +566,16 @@ Node.prototype._onupstreamConnect = function (peer) {
   }
 
   this.upstream = peer
-  this._transport = 'p2p'
-  this._p2pRetries = 0  // Reset retry counter on successful P2P connection
+
+  // Only set transport to 'p2p' if not already set by caller (e.g., _connectViaServer)
+  if (!this._transport) {
+    this._transport = 'p2p'
+  }
+
+  // Reset retry counter on successful P2P connection
+  if (this._transport === 'p2p') {
+    this._p2pRetries = 0
+  }
 
   // change state -> connected
   debug(this.id + ' established upstream connection to ' + peer.id)
