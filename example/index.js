@@ -36,20 +36,48 @@ get(treeRef).then(function(snapshot) {
 
   console.log(isRoot ? 'Becoming ROOT node' : 'Connecting as CHILD node')
 
-  window.root = fireflower('tree', { root: isRoot, reportInterval: 2500 })
+  // Build relay server URL using current hostname (works for LAN/phone access)
+  var relayUrl = 'ws://' + window.location.hostname + ':8082'
+
+  window.root = fireflower('tree', {
+    root: isRoot,
+    reportInterval: 2500,
+    serverFallback: true,
+    serverUrl: relayUrl,
+    maxP2PRetries: 2,
+    p2pUpgradeInterval: 30000
+  })
   window.root.connect()
 
+  window.root.on('fallback', function () {
+    console.log('%c FALLBACK: Switched to server relay', 'color: #00CED1; font-weight: bold')
+  })
+
+  window.root.on('upgrade', function () {
+    console.log('%c UPGRADE: Switched back to P2P', 'color: #00FF00; font-weight: bold')
+  })
+
   window.root.once('connect', function () {
+    console.log('Transport:', window.root.transport)
     window.graph = new Graph('tree', window.root)
     onkchanged()
   })
 }).catch(function(err) {
   console.error('Error checking for root:', err)
-  // Default to root if we can't check
-  window.root = fireflower('tree', { root: true, reportInterval: 2500 })
+  var relayUrl = 'ws://' + window.location.hostname + ':8082'
+
+  window.root = fireflower('tree', {
+    root: true,
+    reportInterval: 2500,
+    serverFallback: true,
+    serverUrl: relayUrl,
+    maxP2PRetries: 2,
+    p2pUpgradeInterval: 30000
+  })
   window.root.connect()
 
   window.root.once('connect', function () {
+    console.log('Transport:', window.root.transport)
     window.graph = new Graph('tree', window.root)
     onkchanged()
   })
