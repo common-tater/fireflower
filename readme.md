@@ -36,6 +36,10 @@ $ npm run example
 
 Open http://localhost:8080 in your browser. Click the canvas to add peer nodes and watch the K-ary tree form in real-time. Works on desktop browsers and mobile (Chrome on Android, Safari on iOS).
 
+## Visualization
+For a 3D visualization of the network topology, see the [visualizer](./visualizer) directory.
+
+
 ## Build
 ```
 $ npm run build
