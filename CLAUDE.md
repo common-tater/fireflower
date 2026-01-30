@@ -57,6 +57,27 @@ After connecting, a node calls `_reviewRequests` which subscribes to Firebase re
 
 This ensures all channels are in the SDP. Previously, auto-negotiation in the constructor caused channels created afterward to not be in the offer.
 
+### Peer failure during 'connecting' state causes stuck node
+When a requester node accepts a response and calls `_connectToPeer`, `this.upstream` is not set until `_onupstreamConnect` fires (after ICE completes). If the P2P connection fails before that, `_onpeerDisconnect` checks `this.upstream === peer` which is false, silently ignoring the failure. The node gets permanently stuck in `'connecting'` state. Fix: in `_onpeerDisconnect`, if `state === 'connecting'` and the peer doesn't match downstream or upstream, reset to `'disconnected'` and schedule reconnect.
+
+### Server node must never use server transport
+The relay server IS the server — it must never try to connect via server transport. When `serverOnly` is set in Firebase config, the relay server's fireflower node would read it and try to connect to its own WebSocket. Guard with `this.isServer ? false : (this.opts.serverOnly || false)` so `isServer` nodes always ignore `serverOnly`.
+
+### serverOnly must be reactive via Firebase config
+The `serverOnly` flag controls whether nodes only accept server responses. It must be:
+1. Stored in Firebase (`tree/configuration/serverOnly`) so all nodes can read it
+2. Reactive in `_onconfig` — when it transitions from true to false, start the P2P upgrade timer
+3. Written as `false` (not `null`) when disabling — `deepMerge` cannot clear keys from `null`
+
+### Stale Firebase reports after reset/restart
+Firebase reports persist until explicitly removed. After resetting or restarting the relay server, old server reports may still exist with recent-enough timestamps. When selecting a server node from reports, always pick the one with the most recent timestamp rather than the first match. For 2D visualization, server-connected nodes should fall back to the server's fixed position (120, height/2) if `graph.serverNode` isn't available yet.
+
+### serverEnabled=false must clear serverOnly
+When the server is disabled (`serverEnabled: false`), `serverOnly` becomes meaningless — there's no server to be "only" using. If `serverOnly` stays true, nodes can't connect via P2P either, causing them to get stuck. In `_onconfig`, override: `serverOnly = (serverEnabled && opts.serverOnly) || false`.
+
+### Relay server auto-reconnect after reset
+When the Reset button clears Firebase data and the root page refreshes, the relay server's upstream WebRTC connection becomes stale. The server should detect the ICE disconnect and reconnect to the new root. If the relay server gets stuck, restart it manually. The server's `onValue` config watcher keeps it responsive to enable/disable toggles.
+
 ## Build
 
 ```bash

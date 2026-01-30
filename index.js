@@ -47,7 +47,7 @@ function Node (path, opts) {
   // server node options
   this.isServer = this.opts.isServer || false
   this.serverUrl = this.opts.serverUrl || null
-  this.serverOnly = this.opts.serverOnly || false
+  this.serverOnly = this.isServer ? false : (this.opts.serverOnly || false)
   this.p2pUpgradeInterval = this.opts.p2pUpgradeInterval || 30000
   this._upgradeTimer = null
   this._pendingAdapters = {}
@@ -201,7 +201,10 @@ Node.prototype._onconfig = function (snapshot) {
   if (data) deepMerge(this.opts, data)
 
   var wasServerOnly = this.serverOnly
-  this.serverOnly = this.opts.serverOnly || false
+  // Server node should never use server transport (it IS the server)
+  // If server is disabled, serverOnly is meaningless — override to false
+  var serverEnabled = this.opts.serverEnabled !== false
+  this.serverOnly = this.isServer ? false : (serverEnabled && this.opts.serverOnly) || false
 
   console.log('[fireflower] config changed', this.id, JSON.stringify(data))
 
@@ -626,7 +629,7 @@ Node.prototype._attemptUpgrade = function () {
     self._connectToPeer(false, response.id, null, response.ref)
 
     // Close server after initiating P2P (so we don't re-enter requesting state)
-    serverUpstream.close()
+    if (serverUpstream) serverUpstream.close()
   }
 
   firebase.onChildAdded(upgradeResponsesRef, onUpgradeResponse)
@@ -675,6 +678,17 @@ Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
     this._ondownstreamDisconnect(peer)
   } else if (this.upstream === peer) {
     this._onupstreamDisconnect(peer)
+  } else if (this.state === 'connecting') {
+    // Peer failed before becoming upstream — reset and reconnect
+    debug(this.id + ' peer failed during connecting state, reconnecting')
+    this.state = 'disconnected'
+    this.emit('statechange')
+    var self = this
+    this._setTimeout(function () {
+      if (!self._preventReconnect) {
+        self.connect()
+      }
+    }, 100)
   }
   // else: stale peer (replaced by a newer connection), ignore
 }
@@ -842,10 +856,12 @@ Node.prototype._updateMask = function (data) {
 
   for (var i in this.downstream) {
     var notifications = this.downstream[i].notifications
-    try {
-      notifications.send(JSON.stringify(data))
-    } catch (err) {
-      console.warn(this.id + ' failed to relay mask update downstream', err)
+    if (notifications && notifications.readyState === 'open') {
+      try {
+        notifications.send(JSON.stringify(data))
+      } catch (err) {
+        console.warn(this.id + ' failed to relay mask update downstream', err)
+      }
     }
   }
 }

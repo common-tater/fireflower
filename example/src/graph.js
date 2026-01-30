@@ -93,42 +93,47 @@ GraphView.prototype._watchServerNode = function (path) {
     }
 
     var now = Date.now()
-    var foundServer = false
+    var bestServer = null
+    var bestTimestamp = 0
 
     for (var id in reports) {
       var report = reports[id]
       if (report.isServer && report.timestamp && (now - report.timestamp) < 10000) {
-        foundServer = true
-        if (!self.serverNode || self.serverNode.serverId !== id) {
-          self._removeServerNode()
-          var el = document.createElement('div')
-          el.className = 'node server-node'
-          el.innerHTML = '<div id="circle"></div><div id="label">SERVER</div><div id="status"></div>'
-          self.serverNode = {
-            el: el,
-            serverId: id,
-            x: 120,
-            y: 0,
-            report: report,
-            render: function () {
-              this.el.style.left = this.x + 'px'
-              this.el.style.top = this.y + 'px'
-            }
-          }
+        if (report.timestamp > bestTimestamp) {
+          bestTimestamp = report.timestamp
+          bestServer = { id: id, report: report }
         }
-        // Update report data each tick
-        self.serverNode.report = report
-        var statusEl = self.serverNode.el.querySelector('#status')
-        var level = report.level != null ? report.level : '?'
-        var transport = report.transport || '?'
-        var health = report.health
-        var scoreText = health ? ' \u2764 ' + health.score : ''
-        statusEl.textContent = 'L' + level + ' ' + transport + scoreText
-        break
       }
     }
 
-    if (!foundServer) {
+    if (bestServer) {
+      var sid = bestServer.id
+      var sreport = bestServer.report
+      if (!self.serverNode || self.serverNode.serverId !== sid) {
+        self._removeServerNode()
+        var el = document.createElement('div')
+        el.className = 'node server-node'
+        el.innerHTML = '<div id="circle"></div><div id="label">SERVER</div><div id="status"></div>'
+        self.serverNode = {
+          el: el,
+          serverId: sid,
+          x: 120,
+          y: 0,
+          report: sreport,
+          render: function () {
+            this.el.style.left = this.x + 'px'
+            this.el.style.top = this.y + 'px'
+          }
+        }
+      }
+      self.serverNode.report = sreport
+      var statusEl = self.serverNode.el.querySelector('#status')
+      var level = sreport.level != null ? sreport.level : '?'
+      var transport = sreport.transport || '?'
+      var health = sreport.health
+      var scoreText = health ? ' \u2764 ' + health.score : ''
+      statusEl.textContent = 'L' + level + ' ' + transport + scoreText
+    } else {
       self._removeServerNode()
     }
 

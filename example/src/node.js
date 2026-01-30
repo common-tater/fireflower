@@ -35,6 +35,10 @@ NodeView.prototype.render = function () {
   if (!upstream && this.graph.serverNode && this.graph.serverNode.serverId === upstreamId) {
     upstream = this.graph.serverNode
   }
+  // Fallback: server-connected nodes always draw to the server's fixed position
+  if (!upstream && upstreamId && this.model.transport === 'server') {
+    upstream = { x: 120, y: this.graph.height / 2 }
+  }
   var scale = isRetina ? 2 : 1
 
   this.el.setAttribute('data-id', this.id)
