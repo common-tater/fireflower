@@ -74,13 +74,10 @@ var wss = new WebSocketServer({ port: port })
 
 wss.on('listening', function () {
   console.log('WebSocket server listening on port', port)
+})
 
-  // Connect the node to the tree
-  node.connect()
-
-  node.once('connect', function () {
-    console.log('Node connected as root, watching for requests...')
-  })
+node.on('connect', function () {
+  console.log('Node connected as root, watching for requests...')
 })
 
 wss.on('connection', function (ws) {
@@ -124,6 +121,26 @@ wss.on('connection', function (ws) {
 
 wss.on('error', function (err) {
   console.error('WebSocket server error:', err)
+})
+
+// Watch serverEnabled config toggle from visualizer
+var { ref, onValue } = require('firebase/database')
+var configRef = ref(firebase.db, firebasePath + '/configuration/serverEnabled')
+var serverActive = false
+
+onValue(configRef, function (snapshot) {
+  var enabled = snapshot.val()
+  if (enabled === null) enabled = true // default to enabled
+
+  if (enabled && !serverActive) {
+    console.log('Server ENABLED via config — connecting to tree')
+    serverActive = true
+    node.connect()
+  } else if (!enabled && serverActive) {
+    console.log('Server DISABLED via config — disconnecting from tree')
+    serverActive = false
+    node.disconnect()
+  }
 })
 
 // Clean up on exit

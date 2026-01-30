@@ -102,3 +102,27 @@ body {
 #graph #nodes .node.server-transport #label {
   color: #00CED1;
 }
+
+#reset-btn {
+  position: fixed;
+  bottom: 36px;
+  left: 36px;
+  font-family: monospace;
+  font-size: 14px;
+  padding: 8px 16px;
+  background: #333;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#reset-btn:hover {
+  background: #c00;
+}
+
+#reset-btn.disabled {
+  background: #666;
+  cursor: default;
+  opacity: 0.5;
+}

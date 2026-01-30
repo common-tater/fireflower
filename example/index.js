@@ -14,6 +14,24 @@ var Graph = require('./src/graph')
 var knumber = document.querySelector('#k-number input')
 knumber.addEventListener('change', onkchanged)
 
+var { remove } = require('firebase/database')
+var resetBtn = document.querySelector('#reset-btn')
+resetBtn.addEventListener('click', function () {
+  if (resetBtn.classList.contains('disabled')) return
+  resetBtn.classList.add('disabled')
+  resetBtn.textContent = 'Disconnected'
+
+  // Disconnect this node and prevent reconnection
+  if (window.root) {
+    window.root.disconnect()
+  }
+
+  // Clear all Firebase data for the tree
+  var treePath = ref(firebase.db, 'tree')
+  remove(ref(firebase.db, 'tree/requests'))
+  remove(ref(firebase.db, 'tree/reports'))
+})
+
 // Check if a root node already exists before deciding to be root
 var treeRef = ref(firebase.db, 'tree/reports')
 get(treeRef).then(function(snapshot) {
