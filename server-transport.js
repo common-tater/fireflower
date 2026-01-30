@@ -2,6 +2,7 @@ module.exports = ServerTransport
 
 var EventEmitter = require('events').EventEmitter
 var inherits = require('inherits')
+var ChannelShim = require('./channel-shim')
 
 inherits(ServerTransport, EventEmitter)
 
@@ -25,6 +26,7 @@ function ServerTransport (opts) {
   this.nodeId = opts.nodeId
   this.initiator = opts.initiator !== false
   this.didConnect = false
+  this.transportType = 'server'
   this._closed = false
   this._channels = {}  // Map of label -> ChannelShim
   this._ws = null
@@ -222,37 +224,3 @@ ServerTransport.prototype._destroy = function () {
   console.log('ServerTransport: destroyed')
 }
 
-/**
- * ChannelShim - Emulates a WebRTC DataChannel over WebSocket
- *
- * Provides the same interface as RTCDataChannel for compatibility
- * with the Node class's expectations.
- */
-function ChannelShim (label, transport) {
-  this.label = label
-  this.readyState = 'open'
-  this.onopen = null
-  this.onmessage = null
-  this.onclose = null
-  this.onerror = null
-  this._transport = transport
-}
-
-ChannelShim.prototype.send = function (data) {
-  if (this.readyState !== 'open') {
-    throw new Error('ChannelShim: cannot send on closed channel')
-  }
-
-  this._transport._send({
-    type: 'channel',
-    label: this.label,
-    data: data
-  })
-}
-
-ChannelShim.prototype.close = function () {
-  this.readyState = 'closed'
-  if (this.onclose) {
-    this.onclose()
-  }
-}

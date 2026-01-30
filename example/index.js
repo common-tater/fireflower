@@ -36,16 +36,9 @@ get(treeRef).then(function(snapshot) {
 
   console.log(isRoot ? 'Becoming ROOT node' : 'Connecting as CHILD node')
 
-  // Build relay server URL using current hostname (works for LAN/phone access)
-  var relayUrl = 'ws://' + window.location.hostname + ':8082'
-
   window.root = fireflower('tree', {
     root: isRoot,
-    reportInterval: 2500,
-    serverFallback: true,
-    serverUrl: relayUrl,
-    maxP2PRetries: 2,
-    p2pUpgradeInterval: 30000
+    reportInterval: 2500
   })
   window.root.connect()
 
@@ -64,15 +57,10 @@ get(treeRef).then(function(snapshot) {
   })
 }).catch(function(err) {
   console.error('Error checking for root:', err)
-  var relayUrl = 'ws://' + window.location.hostname + ':8082'
 
   window.root = fireflower('tree', {
     root: true,
-    reportInterval: 2500,
-    serverFallback: true,
-    serverUrl: relayUrl,
-    maxP2PRetries: 2,
-    p2pUpgradeInterval: 30000
+    reportInterval: 2500
   })
   window.root.connect()
 

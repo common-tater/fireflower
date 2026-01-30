@@ -8,6 +8,7 @@ var events = require('events')
 var inherits = require('inherits')
 var Peer = require('./peer')
 var ServerTransport = require('./server-transport')
+var ServerPeerAdapter = require('./server-peer-adapter')
 var Blacklist = require('./blacklist')
 var firebase = require('firebase/database')
 
@@ -43,14 +44,12 @@ function Node (path, opts) {
   this.blacklist = new Blacklist()
   this._transport = null
 
-  // server fallback options
+  // server node options
+  this.isServer = this.opts.isServer || false
   this.serverUrl = this.opts.serverUrl || null
-  this.serverFallback = this.opts.serverFallback || false
-  this.maxP2PRetries = this.opts.maxP2PRetries || 2
   this.p2pUpgradeInterval = this.opts.p2pUpgradeInterval || 30000
-  this._p2pRetries = 0
   this._upgradeTimer = null
-  this._wasOnServer = false
+  this._pendingAdapters = {}
 
   // firebase refs
   this._ref = firebase.ref(database, this.path)
@@ -163,6 +162,9 @@ Node.prototype.disconnect = function () {
     this._unsubRemovalFlag = null
   }
 
+  // stop upgrade timer
+  this._stopUpgradeTimer()
+
   // close upstream connection
   if (this.upstream) {
     this.upstream.close()
@@ -174,6 +176,12 @@ Node.prototype.disconnect = function () {
     this.downstream[i].close()
   }
   this.downstream = {}
+
+  // close pending adapters
+  for (var j in this._pendingAdapters) {
+    this._pendingAdapters[j].close()
+  }
+  this._pendingAdapters = {}
 
   return this
 }
@@ -290,13 +298,19 @@ Node.prototype._onrequest = function (snapshot) {
   // we have to do this before actually writing our response because
   // firebase can trigger events in the same tick which could circumvent
   // the K check at the top of this method
-  this._connectToPeer(true, peerId, requestId, responseRef)
+  var transportOpts = this.isServer ? { transport: 'server', serverUrl: this.serverUrl } : null
+  this._connectToPeer(true, peerId, requestId, responseRef, transportOpts)
 
   // publish response
-  firebase.update(responseRef, {
+  var response = {
     level: this._level || 0,
     upstream: this.upstream ? this.upstream.id : null
-  })
+  }
+  if (this.isServer) {
+    response.transport = 'server'
+    response.serverUrl = this.serverUrl
+  }
+  firebase.update(responseRef, response)
 
   // watch for request withdrawal
   var unsubWithdraw = firebase.onChildRemoved(responseRef, function () {
@@ -330,6 +344,8 @@ Node.prototype._reviewResponses = function () {
     return
   }
 
+  var p2pRoots = []
+  var serverRoots = []
   var candidates = {}
 
   for (var i in this._responses) {
@@ -343,14 +359,27 @@ Node.prototype._reviewResponses = function () {
     }
 
     if (!response.upstream) {
-      console.log('UseFireflower: accepting root response', response)
-      this._acceptResponse(response)
-      return
+      if (response.transport === 'server') {
+        serverRoots.push(response)
+      } else {
+        p2pRoots.push(response)
+      }
+      continue
     }
 
     candidates[response.id] = response
   }
 
+  // Prefer P2P root over server root
+  if (p2pRoots.length) {
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
+    console.log('UseFireflower: accepting P2P root response', p2pRoots[0])
+    this._acceptResponse(p2pRoots[0])
+    delete this._responses
+    return
+  }
+
+  // Try non-root candidates sorted by level
   var sorted = []
   for (var j in candidates) {
     if (!candidates[candidates[j].upstream]) {
@@ -366,9 +395,19 @@ Node.prototype._reviewResponses = function () {
     console.log('UseFireflower: accepting sorted response', sorted[0])
     this._acceptResponse(sorted[0])
     delete this._responses
-  } else {
-    this._responseReviewInterval = this._setTimeout(this._reviewResponses, 250)
+    return
   }
+
+  // Fall back to server root if available
+  if (serverRoots.length) {
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
+    console.log('UseFireflower: accepting server root response', serverRoots[0])
+    this._acceptResponse(serverRoots[0])
+    delete this._responses
+    return
+  }
+
+  this._responseReviewInterval = this._setTimeout(this._reviewResponses, 250)
 }
 
 Node.prototype._acceptResponse = function (response) {
@@ -386,22 +425,47 @@ Node.prototype._acceptResponse = function (response) {
     this._unsubRemovalFlag = null
   }
 
+  // thread transport metadata to _connectToPeer
+  var transportOpts = null
+  if (response.transport === 'server') {
+    transportOpts = { transport: 'server', serverUrl: response.serverUrl }
+  }
+
   // attempt a connection
-  this._connectToPeer(false, peerId, null, response.ref)
+  this._connectToPeer(false, peerId, null, response.ref, transportOpts)
 }
 
-Node.prototype._connectToPeer = function (initiator, peerId, requestId, responseRef) {
-  var self = this
-  var localSignals = firebase.child(responseRef, initiator ? 'responderSignals' : 'requesterSignals')
-  var remoteSignals = firebase.child(responseRef, initiator ? 'requesterSignals' : 'responderSignals')
+Node.prototype._createTransport = function (initiator, peerId, transportOpts) {
+  if (transportOpts && transportOpts.transport === 'server') {
+    if (initiator && this.isServer) {
+      // Server-side: create a pending adapter that gets wired up when client connects via WebSocket
+      var adapter = new ServerPeerAdapter(peerId)
+      this._pendingAdapters[peerId] = adapter
+      return adapter
+    } else if (!initiator && transportOpts.serverUrl) {
+      // Client-side: create a ServerTransport to connect to the relay server
+      return new ServerTransport({
+        url: transportOpts.serverUrl,
+        nodeId: this.id,
+        initiator: true
+      })
+    }
+  }
 
-  var peer = new Peer({
+  // Default: WebRTC Peer
+  return new Peer({
     initiator: initiator,
     trickle: this.opts.peerConfig ? this.opts.peerConfig.trickle : undefined,
     config: this.opts.peerConfig,
     channelConfig: this.opts.channelConfig
   })
+}
 
+Node.prototype._connectToPeer = function (initiator, peerId, requestId, responseRef, transportOpts) {
+  var self = this
+  var isServerTransport = transportOpts && transportOpts.transport === 'server'
+
+  var peer = this._createTransport(initiator, peerId, transportOpts)
   peer.id = peerId
 
   if (initiator) {
@@ -422,23 +486,30 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
     })
   }
 
+  // Firebase signal exchange (skip for server transport — no ICE/SDP needed)
+  var remoteSignals = null
+  if (!isServerTransport) {
+    var localSignals = firebase.child(responseRef, initiator ? 'responderSignals' : 'requesterSignals')
+    remoteSignals = firebase.child(responseRef, initiator ? 'requesterSignals' : 'responderSignals')
+
+    peer.on('signal', function (signal) {
+      if (initiator && self.state !== 'connected') return
+      signal = JSON.parse(JSON.stringify(signal))
+      firebase.push(localSignals, signal)
+    })
+
+    peer._unsubRemoteSignals = firebase.onChildAdded(remoteSignals, function (snapshot) {
+      if (initiator && self.state !== 'connected') return
+      var signal = snapshot.val()
+      peer.signal(signal)
+    })
+  }
+
   peer.on('connect', this._onpeerConnect.bind(this, peer, remoteSignals))
   peer.on('close', this._onpeerDisconnect.bind(this, peer, remoteSignals))
 
   peer.on('error', function (err) {
     debug(self.id + ' saw peer connection error: ' + (err.message || err))
-  })
-
-  peer.on('signal', function (signal) {
-    if (initiator && self.state !== 'connected') return
-    signal = JSON.parse(JSON.stringify(signal))
-    firebase.push(localSignals, signal)
-  })
-
-  peer._unsubRemoteSignals = firebase.onChildAdded(remoteSignals, function (snapshot) {
-    if (initiator && self.state !== 'connected') return
-    var signal = snapshot.val()
-    peer.signal(signal)
   })
 
   // timeout connections
@@ -451,95 +522,6 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   }, this.connectionTimeout)
 }
 
-Node.prototype._connectViaServer = function () {
-  var self = this
-
-  // Emit fallback event (suppress if this is a re-fallback after failed upgrade)
-  if (!this._wasOnServer) {
-    this.emit('fallback')
-  }
-
-  // Change state
-  this.state = 'connecting'
-  this.emit('statechange')
-
-  // Get server URL (from opts or Firebase registry)
-  if (!this.serverUrl) {
-    // TODO: In future, look up available servers from Firebase servers/ path
-    // For now, require explicit serverUrl in opts
-    debug(this.id + ' server fallback enabled but no serverUrl provided')
-    this.state = 'disconnected'
-    this.emit('statechange')
-    this.emit('error', new Error('Server fallback enabled but no serverUrl configured'))
-    return
-  }
-
-  debug(this.id + ' connecting to relay server: ' + this.serverUrl)
-
-  // Create ServerTransport
-  var transport = new ServerTransport({
-    url: this.serverUrl,
-    nodeId: this.id,
-    initiator: true
-  })
-
-  // The server will assign its own ID via the connect handshake
-  // For now, use a placeholder
-  transport.id = '__relay__'
-
-  // Set up notifications channel (we're the initiator/client)
-  transport.notifications = transport.createDataChannel('notifications')
-  transport.notifications.onopen = function () {
-    debug(self.id + ' server notifications channel opened')
-    self._updateMask({
-      mask: self._mask || self.id,
-      level: self._level || 0
-    })
-  }
-
-  // Handle connect event
-  transport.on('connect', function () {
-    debug(self.id + ' connected to relay server')
-    transport.didConnect = true
-    self._transport = 'server'
-    self._onupstreamConnect(transport)
-
-    // Start periodic P2P upgrade attempts
-    self._startUpgradeTimer()
-  })
-
-  // Handle close event
-  transport.on('close', function () {
-    debug(self.id + ' relay server connection closed')
-    self._onupstreamDisconnect(transport)
-  })
-
-  // Handle error event
-  transport.on('error', function (err) {
-    debug(self.id + ' relay server error: ' + (err.message || err))
-  })
-
-  // Connection timeout
-  this._setTimeout(function () {
-    if (!transport.didConnect) {
-      debug(self.id + ' relay server connection timed out')
-      transport.didTimeout = true
-      transport.close()
-    }
-  }, this.connectionTimeout)
-}
-
-Node.prototype._startUpgradeTimer = function () {
-  this._stopUpgradeTimer()
-
-  if (!this.serverFallback || !this.p2pUpgradeInterval) return
-
-  var self = this
-  this._upgradeTimer = this._setTimeout(function () {
-    self._tryP2PUpgrade()
-  }, this.p2pUpgradeInterval)
-}
-
 Node.prototype._stopUpgradeTimer = function () {
   if (this._upgradeTimer) {
     this._clearTimeout(this._upgradeTimer)
@@ -547,17 +529,65 @@ Node.prototype._stopUpgradeTimer = function () {
   }
 }
 
-Node.prototype._tryP2PUpgrade = function () {
+/**
+ * Attempt to upgrade from server to P2P while staying connected.
+ * Publishes a secondary request; if a P2P parent responds, switch over.
+ */
+Node.prototype._attemptUpgrade = function () {
   if (this._transport !== 'server' || this.state !== 'connected') return
 
   debug(this.id + ' attempting P2P upgrade from server')
-  this._wasOnServer = true
+  var self = this
+  var upgradeRequestRef = firebase.push(this._requestsRef, {
+    id: this.id,
+    removal_flag: { removed: false }
+  })
 
-  // Close server transport to trigger reconnection via P2P
-  // _onupstreamDisconnect will detect previousTransport === 'server',
-  // reset _p2pRetries to 0, and call connect() for a P2P attempt.
-  // If P2P fails after maxP2PRetries, it falls back to server again.
-  this.upstream.close()
+  var upgradeResponsesRef = firebase.child(upgradeRequestRef, 'responses')
+  var upgradeTimeout = null
+
+  var onUpgradeResponse = function (snapshot) {
+    var response = snapshot.val()
+    response.id = snapshot.key
+    response.ref = snapshot.ref
+
+    // Only accept P2P responses for upgrade
+    if (response.transport === 'server') return
+    if (self.blacklist.contains(response.id)) return
+
+    // Got a P2P response — accept it
+    firebase.off(upgradeResponsesRef, 'child_added', onUpgradeResponse)
+    self._clearTimeout(upgradeTimeout)
+
+    debug(self.id + ' got P2P upgrade response from ' + response.id)
+
+    // Close server upstream, then accept P2P connection
+    var serverUpstream = self.upstream
+    self.upstream = null
+    self._transport = null
+    self.state = 'connecting'
+    self.emit('statechange')
+
+    self._connectToPeer(false, response.id, null, response.ref)
+
+    // Close server after initiating P2P (so we don't re-enter requesting state)
+    serverUpstream.close()
+  }
+
+  firebase.onChildAdded(upgradeResponsesRef, onUpgradeResponse)
+
+  // Timeout: clean up and reschedule
+  upgradeTimeout = this._setTimeout(function () {
+    firebase.off(upgradeResponsesRef, 'child_added', onUpgradeResponse)
+    firebase.remove(upgradeRequestRef)
+
+    // Schedule next attempt
+    if (self._transport === 'server' && self.state === 'connected') {
+      self._upgradeTimer = self._setTimeout(function () {
+        self._attemptUpgrade()
+      }, self.p2pUpgradeInterval)
+    }
+  }, self.connectionTimeout)
 }
 
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
@@ -594,7 +624,7 @@ Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
 }
 
 Node.prototype._onupstreamConnect = function (peer) {
-  // remove our request (may not exist for server transport connections)
+  // remove our request
   if (this._requestRef) {
     firebase.remove(this._requestRef)
   }
@@ -606,24 +636,25 @@ Node.prototype._onupstreamConnect = function (peer) {
     return
   }
 
+  var previousTransport = this._transport
   this.upstream = peer
+  this._transport = peer.transportType || 'p2p'
 
-  // Only set transport to 'p2p' if not already set by caller (e.g., _connectViaServer)
-  if (!this._transport) {
-    this._transport = 'p2p'
+  // Upgraded from server to P2P
+  if (previousTransport === 'server' && this._transport === 'p2p') {
+    this._stopUpgradeTimer()
+    debug(this.id + ' upgraded from server to P2P')
+    this.emit('upgrade')
   }
 
-  // Reset retry counter on successful P2P connection
-  if (this._transport === 'p2p') {
-    this._p2pRetries = 0
+  // Start P2P upgrade timer when connected via server
+  if (this._transport === 'server' && this.p2pUpgradeInterval) {
     this._stopUpgradeTimer()
-
-    // Emit upgrade if we transitioned from server to P2P
-    if (this._wasOnServer) {
-      this._wasOnServer = false
-      debug(this.id + ' upgraded from server to P2P')
-      this.emit('upgrade')
-    }
+    var self = this
+    this._upgradeTimer = this._setTimeout(function () {
+      self._attemptUpgrade()
+    }, this.p2pUpgradeInterval)
+    this.emit('fallback')
   }
 
   // change state -> connected
@@ -646,9 +677,6 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   }
 
   this.upstream = null
-
-  // Save previous transport type for reconnection logic
-  var previousTransport = this._transport
   this._transport = null
   this._stopUpgradeTimer()
 
@@ -680,27 +708,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 
     this._setTimeout(function () {
       if (!self._preventReconnect) {
-        // If we were on server and it disconnected, reset P2P retries and try P2P again
-        if (previousTransport === 'server') {
-          debug(self.id + ' server connection lost, attempting P2P reconnection')
-          self._p2pRetries = 0
-          self.connect()
-        }
-        // If we were on P2P or never connected
-        else {
-          // Increment retry counter for P2P connections
-          self._p2pRetries = (self._p2pRetries || 0) + 1
-          debug(self.id + ' P2P retry count: ' + self._p2pRetries + '/' + self.maxP2PRetries)
-
-          // Check if we should fall back to server
-          if (self._p2pRetries > self.maxP2PRetries && self.serverFallback) {
-            debug(self.id + ' P2P retries exceeded, falling back to server')
-            self._connectViaServer()
-          } else {
-            // Continue trying P2P
-            self.connect()
-          }
-        }
+        self.connect()
       }
     }, delay)
   }
@@ -730,6 +738,7 @@ Node.prototype._ondownstreamConnect = function (peer) {
 Node.prototype._ondownstreamDisconnect = function (peer) {
   // remove from lookup
   delete this.downstream[peer.id]
+  delete this._pendingAdapters[peer.id]
 
   // emit events and potentially remove stale requests
   if (peer.didConnect) {

@@ -14,6 +14,7 @@ function Peer (opts) {
   this.config = opts.config || {}
   this.channelConfig = opts.channelConfig || {}
   this.didConnect = false
+  this.transportType = 'p2p'
   this._closed = false
 
   this._pc = new RTCPeerConnection(this.config)
