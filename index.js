@@ -1,24 +1,37 @@
-module.exports = function (_Firebase) {
-  Firebase = _Firebase
+module.exports = function (db) {
+  database = db
   return Node
 }
 
 var debug = require('debug')('fireflower')
-var merge = require('merge').recursive
 var events = require('events')
 var inherits = require('inherits')
-var SimplePeer = require('simpler-peer')
+var Peer = require('./peer')
 var Blacklist = require('./blacklist')
-var Firebase = null
+var firebase = require('firebase/database')
+
+var database = null
+
+function deepMerge (target, source) {
+  for (var key in source) {
+    if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+      if (!target[key] || typeof target[key] !== 'object') target[key] = {}
+      deepMerge(target[key], source[key])
+    } else {
+      target[key] = source[key]
+    }
+  }
+  return target
+}
 
 inherits(Node, events.EventEmitter)
 
-function Node (url, opts) {
+function Node (path, opts) {
   if (!(this instanceof Node)) {
-    return new Node(url, opts)
+    return new Node(path, opts)
   }
 
-  this.url = url
+  this.path = path
   this.opts = opts || {}
   this.root = this.opts.root
   this.reportInterval = this.opts.reportInterval
@@ -29,20 +42,20 @@ function Node (url, opts) {
   this.blacklist = new Blacklist()
 
   // firebase refs
-  this._ref = new Firebase(this.url)
-  this._configRef = this._ref.child('configuration')
-  this._requestsRef = this._ref.child('requests')
-  this._reports = this._ref.child('reports')
+  this._ref = firebase.ref(database, this.path)
+  this._configRef = firebase.child(this._ref, 'configuration')
+  this._requestsRef = firebase.child(this._ref, 'requests')
+  this._reports = firebase.child(this._ref, 'reports')
 
   // set a random id if one was not provided
-  this.id = this.opts.id || this._requestsRef.push().key()
+  this.id = this.opts.id || firebase.push(this._requestsRef).key
 
   // ensure K
   this.K = this.K || 0
 
   // use external setTimeout if provided
-  this._setTimeout = this.opts.setTimeout || window.setTimeout.bind(window)
-  this._clearTimeout = this.opts.clearTimeout || window.clearTimeout.bind(window)
+  this._setTimeout = this.opts.setTimeout || setTimeout.bind(window)
+  this._clearTimeout = this.opts.clearTimeout || clearTimeout.bind(window)
 
   // bind callbacks
   this._onconfig = this._onconfig.bind(this)
@@ -98,7 +111,7 @@ Node.prototype.connect = function () {
 
   // watch config
   if (!this._watchingConfig) {
-    this._configRef.on('value', this._onconfig)
+    firebase.onValue(this._configRef, this._onconfig)
     this._watchingConfig = true
   }
 
@@ -114,8 +127,8 @@ Node.prototype.disconnect = function () {
 
   // remove some listeners
   this.removeListener('configure', this._doconnect)
-  this._configRef.off('value', this._onconfig)
-  this._requestsRef.off('child_added', this._onrequest)
+  firebase.off(this._configRef, 'value', this._onconfig)
+  firebase.off(this._requestsRef, 'child_added', this._onrequest)
 
   // stop reporting
   this._clearTimeout(this._reportInterval)
@@ -123,8 +136,14 @@ Node.prototype.disconnect = function () {
 
   // remove outstanding request / response listener
   if (this._requestRef) {
-    this._requestRef.remove()
-    this._responsesRef.off('child_added', this._onresponse)
+    firebase.remove(this._requestRef)
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
+  }
+
+  // clean up removal flag listener
+  if (this._unsubRemovalFlag) {
+    this._unsubRemovalFlag()
+    this._unsubRemovalFlag = null
   }
 
   // close upstream connection
@@ -146,7 +165,7 @@ Node.prototype.disconnect = function () {
 
 Node.prototype._onconfig = function (snapshot) {
   var data = snapshot.val()
-  merge(this.opts, data)
+  if (data) deepMerge(this.opts, data)
   debug(this.id + ' updated configuration')
   this.emit('configure')
 }
@@ -167,7 +186,7 @@ Node.prototype._doconnect = function () {
       self.emit('connect')
 
       // start responding to requests
-      self._requestsRef.on('child_added', self._onrequest)
+      firebase.onChildAdded(self._requestsRef, self._onrequest)
     })
 
     return
@@ -178,9 +197,10 @@ Node.prototype._doconnect = function () {
 }
 
 Node.prototype._dorequest = function () {
+  console.log('UseFireflower: _dorequest', this.id)
   var self = this
 
-  this._requestRef = this._requestsRef.push({
+  this._requestRef = firebase.push(this._requestsRef, {
     id: this.id,
     removal_flag: {
       removed: false
@@ -188,17 +208,21 @@ Node.prototype._dorequest = function () {
   })
 
   // make sure no one removes our request until we're connected
-  this._requestRef.child('removal_flag').once('child_removed', function () {
+  var removalFlagRef = firebase.child(this._requestRef, 'removal_flag')
+  var unsubRemoval = firebase.onChildRemoved(removalFlagRef, function () {
+    unsubRemoval()
+    self._unsubRemovalFlag = null
     if (self.state === 'requesting') {
-      self._responsesRef.off('child_added', self._onresponse)
+      firebase.off(self._responsesRef, 'child_added', self._onresponse)
       self._dorequest()
     }
   })
+  this._unsubRemovalFlag = unsubRemoval
 
   // listen for a response
   delete this._responses
-  this._responsesRef = this._requestRef.child('responses')
-  this._responsesRef.on('child_added', this._onresponse)
+  this._responsesRef = firebase.child(this._requestRef, 'responses')
+  firebase.onChildAdded(this._responsesRef, this._onresponse)
 }
 
 Node.prototype._onrequest = function (snapshot) {
@@ -211,15 +235,16 @@ Node.prototype._onrequest = function (snapshot) {
   }
 
   var self = this
-  var requestRef = snapshot.ref()
-  var requestId = snapshot.key()
+  var requestRef = snapshot.ref
+  var requestId = snapshot.key
   var request = snapshot.val()
+  console.log('UseFireflower: _onrequest from', requestId, request, 'myId:', this.id)
   var peerId = request.id
 
   // responders may accidentally recreate requests
   // these won't have an id though and can be removed
   if (!peerId) {
-    requestRef.remove()
+    firebase.remove(requestRef)
     return
   }
 
@@ -242,7 +267,7 @@ Node.prototype._onrequest = function (snapshot) {
 
   debug(this.id + ' saw request by ' + peerId)
 
-  var responseRef = requestRef.child('responses/' + this.id)
+  var responseRef = firebase.child(requestRef, 'responses/' + this.id)
 
   // initiate peer connection
   // we have to do this before actually writing our response because
@@ -251,13 +276,14 @@ Node.prototype._onrequest = function (snapshot) {
   this._connectToPeer(true, peerId, requestId, responseRef)
 
   // publish response
-  responseRef.update({
+  firebase.update(responseRef, {
     level: this._level || 0,
     upstream: this.upstream ? this.upstream.id : null
   })
 
   // watch for request withdrawal
-  responseRef.once('child_removed', function () {
+  var unsubWithdraw = firebase.onChildRemoved(responseRef, function () {
+    unsubWithdraw()
     var peer = self.downstream[peerId]
     if (peer && !peer.didConnect) {
       peer.requestWithdrawn = true
@@ -282,7 +308,7 @@ Node.prototype._onresponse = function (snapshot) {
 
 Node.prototype._reviewResponses = function () {
   if (this.state !== 'requesting') {
-    this._responsesRef.off('child_added', this._onresponse)
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
     delete this._responses
     return
   }
@@ -292,14 +318,15 @@ Node.prototype._reviewResponses = function () {
   for (var i in this._responses) {
     var snapshot = this._responses[i]
     var response = snapshot.val()
-    response.id = snapshot.key()
-    response.ref = snapshot.ref()
+    response.id = snapshot.key
+    response.ref = snapshot.ref
 
     if (this.blacklist.contains(response.id)) {
       continue
     }
 
     if (!response.upstream) {
+      console.log('UseFireflower: accepting root response', response)
       this._acceptResponse(response)
       return
     }
@@ -308,9 +335,9 @@ Node.prototype._reviewResponses = function () {
   }
 
   var sorted = []
-  for (var i in candidates) {
-    if (!candidates[candidates[i].upstream]) {
-      sorted.push(candidates[i])
+  for (var j in candidates) {
+    if (!candidates[candidates[j].upstream]) {
+      sorted.push(candidates[j])
     }
   }
   sorted.sort(function (a, b) {
@@ -318,7 +345,8 @@ Node.prototype._reviewResponses = function () {
   })
 
   if (sorted.length) {
-    this._responsesRef.off('child_added', this._onresponse)
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
+    console.log('UseFireflower: accepting sorted response', sorted[0])
     this._acceptResponse(sorted[0])
     delete this._responses
   } else {
@@ -331,11 +359,15 @@ Node.prototype._acceptResponse = function (response) {
 
   // change state -> connecting (this prevents accepting multiple responses)
   debug(this.id + ' got response from ' + peerId)
+  console.log('UseFireflower: _acceptResponse from', peerId, response)
   this.state = 'connecting'
   this.emit('statechange')
 
   // stop watching for request removal
-  this._requestRef.child('removal_flag').off()
+  if (this._unsubRemovalFlag) {
+    this._unsubRemovalFlag()
+    this._unsubRemovalFlag = null
+  }
 
   // attempt a connection
   this._connectToPeer(false, peerId, null, response.ref)
@@ -343,10 +375,10 @@ Node.prototype._acceptResponse = function (response) {
 
 Node.prototype._connectToPeer = function (initiator, peerId, requestId, responseRef) {
   var self = this
-  var localSignals = responseRef.child(initiator ? 'responderSignals' : 'requesterSignals')
-  var remoteSignals = responseRef.child(initiator ? 'requesterSignals' : 'responderSignals')
+  var localSignals = firebase.child(responseRef, initiator ? 'responderSignals' : 'requesterSignals')
+  var remoteSignals = firebase.child(responseRef, initiator ? 'requesterSignals' : 'responderSignals')
 
-  var peer = new SimplePeer({
+  var peer = new Peer({
     initiator: initiator,
     trickle: this.opts.peerConfig ? this.opts.peerConfig.trickle : undefined,
     config: this.opts.peerConfig,
@@ -358,13 +390,17 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   if (initiator) {
     this.downstream[peer.id] = peer
     peer.notifications = peer.createDataChannel('notifications')
-    peer.notifications.on('open', this._onnotificationsOpen.bind(this, peer))
+    peer.notifications.onopen = function () {
+      self._onnotificationsOpen(peer)
+    }
     peer.requestId = requestId
   } else {
     peer.on('datachannel', function (channel) {
       if (channel.label === 'notifications') {
         peer.notifications = channel
-        peer.notifications.on('message', self._onmaskUpdate)
+        peer.notifications.onmessage = function (evt) {
+          self._onmaskUpdate(evt)
+        }
       }
     })
   }
@@ -373,16 +409,16 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   peer.on('close', this._onpeerDisconnect.bind(this, peer, remoteSignals))
 
   peer.on('error', function (err) {
-    debug(this.id + ' saw peer connection error', err)
+    debug(self.id + ' saw peer connection error: ' + (err.message || err))
   })
 
   peer.on('signal', function (signal) {
     if (initiator && self.state !== 'connected') return
     signal = JSON.parse(JSON.stringify(signal))
-    localSignals.push(signal)
+    firebase.push(localSignals, signal)
   })
 
-  remoteSignals.on('child_added', function (snapshot) {
+  peer._unsubRemoteSignals = firebase.onChildAdded(remoteSignals, function (snapshot) {
     if (initiator && self.state !== 'connected') return
     var signal = snapshot.val()
     peer.signal(signal)
@@ -399,23 +435,30 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
 }
 
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
+  console.log('UseFireflower: _onpeerConnect', peer.id)
   peer.didConnect = true
   peer.removeAllListeners('connect')
   peer.removeAllListeners('signal')
-  remoteSignals.off()
+  if (peer._unsubRemoteSignals) {
+    peer._unsubRemoteSignals()
+    peer._unsubRemoteSignals = null
+  }
 
   if (!this.downstream[peer.id]) {
     this._onupstreamConnect(peer)
   }
 }
 
-Node.prototype._onnotificationsOpen = function (peer, evt) {
+Node.prototype._onnotificationsOpen = function (peer) {
   this._ondownstreamConnect(peer)
 }
 
 Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
   peer.removeAllListeners()
-  remoteSignals.off()
+  if (peer._unsubRemoteSignals) {
+    peer._unsubRemoteSignals()
+    peer._unsubRemoteSignals = null
+  }
 
   if (this.downstream[peer.id]) {
     this._ondownstreamDisconnect(peer)
@@ -426,7 +469,7 @@ Node.prototype._onpeerDisconnect = function (peer, remoteSignals) {
 
 Node.prototype._onupstreamConnect = function (peer) {
   // remove our request
-  this._requestRef.remove()
+  firebase.remove(this._requestRef)
 
   // already got connected by someone else
   if (this.state === 'connected') {
@@ -449,10 +492,12 @@ Node.prototype._onupstreamConnect = function (peer) {
 
 Node.prototype._onupstreamDisconnect = function (peer) {
   // stop responding to new requests
-  this._requestsRef.off('child_added', this._onrequest)
+  firebase.off(this._requestsRef, 'child_added', this._onrequest)
 
   // remove request
-  this._requestRef.remove()
+  if (this._requestRef) {
+    firebase.remove(this._requestRef)
+  }
 
   this.upstream = null
 
@@ -495,7 +540,7 @@ Node.prototype._ondownstreamConnect = function (peer) {
 
   // stop responding to requests if peers > K
   if (Object.keys(this.downstream).length >= this.opts.K) {
-    this._requestsRef.off('child_added', this._onrequest)
+    firebase.off(this._requestsRef, 'child_added', this._onrequest)
   }
 
   // make sure downstream has the most up to date mask
@@ -525,7 +570,7 @@ Node.prototype._ondownstreamDisconnect = function (peer) {
       debug(this.id + ' saw request withdrawn by ' + peer.id)
     } else if (peer.didTimeout) {
       debug(this.id + ' removing stale request by ' + peer.id)
-      this._requestsRef.child(peer.requestId).remove()
+      firebase.remove(firebase.child(this._requestsRef, peer.requestId))
     }
   }
 
@@ -562,7 +607,7 @@ Node.prototype._onreportNeeded = function () {
   var report = {
     state: this.state,
     upstream: this.upstream ? this.upstream.id : null,
-    timestamp: Firebase.ServerValue.TIMESTAMP
+    timestamp: firebase.serverTimestamp()
   }
 
   if (this.root) {
@@ -573,9 +618,10 @@ Node.prototype._onreportNeeded = function () {
     report.data = this.reportData
   }
 
-  this._reports
-    .child(this.id)
-    .update(report)
+  firebase.update(
+    firebase.child(this._reports, this.id),
+    report
+  )
 
   this._reportInterval = this._setTimeout(
     this._onreportNeeded,
@@ -585,7 +631,7 @@ Node.prototype._onreportNeeded = function () {
 
 Node.prototype._reviewRequests = function () {
   if (this.state === 'connected' && Object.keys(this.downstream).length < this.opts.K) {
-    this._requestsRef.off('child_added', this._onrequest)
-    this._requestsRef.on('child_added', this._onrequest)
+    firebase.off(this._requestsRef, 'child_added', this._onrequest)
+    firebase.onChildAdded(this._requestsRef, this._onrequest)
   }
 }
