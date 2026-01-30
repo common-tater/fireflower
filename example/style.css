@@ -93,3 +93,12 @@ body {
   text-align: center;
   font-size: 12px;
 }
+
+#graph #nodes .node.server-transport #circle {
+  background-color: rgba(0, 206, 209, 0.4);
+  border-color: rgba(0, 160, 163, 0.7);
+}
+
+#graph #nodes .node.server-transport #label {
+  color: #00CED1;
+}

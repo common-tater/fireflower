@@ -26,7 +26,9 @@ NodeView.prototype.render = function () {
   var scale = isRetina ? 2 : 1
 
   this.el.setAttribute('data-id', this.id)
-  this.el.querySelector('#label').textContent = this.id
+  var transport = this.model.transport
+  this.el.querySelector('#label').textContent = this.id + (transport === 'server' ? ' [S]' : '')
+  this.el.classList.toggle('server-transport', transport === 'server')
 
   this.x = Math.min(this.x, this.graph.width)
   this.y = Math.min(this.y, this.graph.height)
@@ -39,7 +41,7 @@ NodeView.prototype.render = function () {
     ctx.lineTo(self.x * scale, self.y * scale)
     ctx.lineWidth = 2 * window.devicePixelRatio
     ctx.lineCap = 'round'
-    ctx.strokeStyle = 'rgba(104, 104, 104, 0.5)'
+    ctx.strokeStyle = transport === 'server' ? 'rgba(0, 206, 209, 0.7)' : 'rgba(104, 104, 104, 0.5)'
     ctx.stroke()
   }
 }

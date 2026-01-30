@@ -730,6 +730,7 @@ Node.prototype._onreportNeeded = function () {
   var report = {
     state: this.state,
     upstream: this.upstream ? this.upstream.id : null,
+    transport: this._transport,
     timestamp: firebase.serverTimestamp()
   }
 
