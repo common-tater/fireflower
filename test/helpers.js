@@ -190,6 +190,11 @@ async function clearFirebase () {
   await set(ref(db, TEST_PATH + '/configuration/serverOnly'), false)
 }
 
+async function clearFirebaseRequests () {
+  var db = getDb()
+  await remove(ref(db, TEST_PATH + '/requests'))
+}
+
 async function waitForRootReady (page, timeout) {
   timeout = timeout || 15000
   var start = Date.now()
@@ -217,6 +222,7 @@ module.exports = {
   reconnectNode: reconnectNode,
   resetAll: resetAll,
   clearFirebase: clearFirebase,
+  clearFirebaseRequests: clearFirebaseRequests,
   waitForRootReady: waitForRootReady,
   STEP_DELAY: STEP_DELAY,
   TEST_PATH: TEST_PATH

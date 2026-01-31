@@ -24,7 +24,7 @@ var scenarios = [
   { name: 'Node Departure & Recovery', fn: scenario8 },
   { name: 'Mixed Transport Tree', fn: scenario9 },
   { name: 'Large Tree (K=3)', fn: scenario10 },
-  { name: 'Server Restart Recovery', fn: scenario11 },
+  { name: 'WebSocket Reconnection', fn: scenario11 },
   { name: 'Disconnect All & Reconnect', fn: scenario12 }
 ]
 
@@ -286,7 +286,7 @@ async function scenario10 (page) {
 }
 
 async function scenario11 (page, ctx) {
-  // Server Restart Recovery
+  // WebSocket Reconnection — clients detect server disconnect and fall back to P2P
   await h.setK(page, 2)
   await h.setServerEnabled(page, true)
   await h.wait(2000)
@@ -295,23 +295,25 @@ async function scenario11 (page, ctx) {
 
   await h.addNodes(page, 3)
   await h.waitForAllConnected(page, 4)
-  h.log('  Nodes connected via server, killing relay server...')
+  h.log('  Nodes connected via server, now disabling server...')
 
-  // Kill relay server
-  if (ctx.relayProcess) {
-    ctx.relayProcess.kill('SIGTERM')
-    await h.wait(3000)
+  // Disable server via config (graceful shutdown)
+  await h.setServerEnabled(page, false)
+  await h.wait(3000)
+
+  // Clients should detect WebSocket close and reconnect via P2P
+  await h.waitForAllConnected(page, 4, 60000)
+  var states = await h.getNodeStates(page)
+  var nonRoot = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+
+  // All non-root should be P2P after server shutdown
+  for (var i = 0; i < nonRoot.length; i++) {
+    assert(states[nonRoot[i]].transport === 'p2p',
+      'Node ' + nonRoot[i].slice(-5) + ' should be p2p after server shutdown, got ' + states[nonRoot[i]].transport)
   }
 
-  // Restart relay server
-  h.log('  Restarting relay server...')
-  ctx.relayProcess = startRelayServer()
-  await h.wait(8000) // let server start, connect to tree, and begin responding
-
-  // Nodes should recover — they need to timeout old requests, re-request, and connect via new server
-  await h.waitForAllConnected(page, 4, 60000)
-  h.log('  Nodes recovered after server restart')
-  await h.setForceServer(page, false)
+  h.log('  Clients reconnected via P2P after server shutdown')
+  await h.setServerEnabled(page, true) // clean up for next test
 }
 
 async function scenario12 (page) {
@@ -360,8 +362,17 @@ function startExampleServer () {
   return proc
 }
 
-function startRelayServer () {
-  var proc = spawn('node', ['relay-server.js', '--firebase-path', h.TEST_PATH], {
+function startRelayServer (opts) {
+  opts = opts || {}
+  var args = [
+    'relay-server.js',
+    '--firebase-path', h.TEST_PATH
+  ]
+  // Only use fixed ID if requested (for server restart test)
+  if (opts.useFixedId) {
+    args.push('--id', 'test-relay-server')
+  }
+  var proc = spawn('node', args, {
     cwd: ROOT,
     env: Object.assign({}, process.env, { PORT: RELAY_PORT }),
     stdio: ['ignore', 'pipe', 'pipe']
