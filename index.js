@@ -88,6 +88,9 @@ function Node (path, opts) {
   // dedup: track request IDs we've already responded to
   this._respondedRequests = {}
 
+  // ancestor chain for transitive circle detection
+  this._ancestors = []
+
   // diagnostic ring buffer — last 50 events, readable from outside
   this._debugLog = []
 
@@ -272,7 +275,7 @@ Node.prototype._onconfig = function (snapshot) {
 
   // If serverOnly was just turned off while connected via server, start upgrade timer
   if (wasServerOnly && !this.serverOnly && this._transport === 'server' && this.state === 'connected') {
-    console.log('[' + ts() + '] [fireflower] serverOnly disabled, starting P2P upgrade', this.id)
+    console.log('[' + ts() + '] [fireflower] serverOnly disabled, starting P2P upgrade', this.id.slice(-5))
     this._stopUpgradeTimer()
     var self = this
     var jitter = Math.floor(Math.random() * this.p2pUpgradeInterval * 0.25)
@@ -281,9 +284,20 @@ Node.prototype._onconfig = function (snapshot) {
     }, this.p2pUpgradeInterval + jitter)
   }
 
+  // serverOnly cleared while requesting — restart request so it has serverOnly=false.
+  // This happens when the server dies (triggering _dorequest with old serverOnly=true)
+  // and the config change (serverOnly=false) arrives via Firebase shortly after.
+  if (wasServerOnly && !this.serverOnly && this.state === 'requesting') {
+    console.log('[' + ts() + '] [fireflower] serverOnly disabled while requesting, restarting request', this.id.slice(-5))
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
+    this._clearTimeout(this._responseReviewInterval)
+    if (this._requestRef) firebase.remove(this._requestRef)
+    this._dorequest()
+  }
+
   // Force server ON: switch existing P2P nodes to server
   if (!wasServerOnly && this.serverOnly && this._transport === 'p2p' && this.state === 'connected') {
-    console.log('[' + ts() + '] [fireflower] serverOnly enabled, switching to server', this.id)
+    console.log('[' + ts() + '] [fireflower] serverOnly enabled, switching to server', this.id.slice(-5))
     if (this._serverFallback) {
       // Promote existing server fallback
       var p2pUpstream = this.upstream
@@ -310,9 +324,12 @@ Node.prototype._doconnect = function () {
     // emit connect but in nextTick
     this._setTimeout(function () {
       // change state -> connected
-      console.log('[' + ts() + '] [fireflower] connected as root', self.id)
+      self._log('connected as root')
       debug(self.id + ' connected as root')
       self._connectedAt = Date.now()
+      self._mask = self.id
+      self._level = 0
+      self._ancestors = []
       self.state = 'connected'
       self.emit('statechange')
 
@@ -320,6 +337,7 @@ Node.prototype._doconnect = function () {
       self.emit('connect')
 
       // start responding to requests
+      self._log('root LISTENING for requests')
       firebase.onChildAdded(self._requestsRef, self._onrequest)
     })
 
@@ -332,14 +350,17 @@ Node.prototype._doconnect = function () {
 
 Node.prototype._dorequest = function () {
   this._log('dorequest state=' + this.state)
+  console.log('[' + ts() + '] [fireflower] _dorequest', this.id.slice(-5), 'state=' + this.state, 'transport=' + this._transport, 'serverFirst=' + this.serverFirst, 'serverOnly=' + this.serverOnly)
   debug(this.id + ' requesting connection')
   var self = this
 
   var requestData = {
     id: this.id,
+    t: Date.now(),
     removal_flag: {
       removed: false
-    }
+    },
+    serverOnly: this.serverOnly
   }
   if (this.isServer) requestData.isServer = true
   this._requestRef = firebase.push(this._requestsRef, requestData)
@@ -367,10 +388,40 @@ Node.prototype._onrequest = function (snapshot) {
   var request = snapshot.val()
   var peerId = request.id
 
+  if (this.root) {
+    console.log('[' + ts() + '] [fireflower] root SAW request', (requestId || '').slice(-5), 'from', (peerId || '').slice(-5), 'state=' + this.state)
+  }
+  if (this.isServer) {
+    console.log('[' + ts() + '] [fireflower] server SAW request', (requestId || '').slice(-5), 'from', (peerId || '').slice(-5), 'state=' + this.state, 'serverOnly=' + (request.serverOnly || false))
+  }
+
   if (this.state !== 'connected') {
-    this._log('SKIP request ' + (requestId || '').slice(-5) + ' from ' + (peerId || '').slice(-5) + ': not connected (state=' + this.state + ')')
+    console.log('[' + ts() + '] [fireflower] SKIP request', (requestId || '').slice(-5), 'from', (peerId || '').slice(-5), this.id.slice(-5) + ': not connected (state=' + this.state + ')')
     return
   }
+
+  // Ignore stale requests (older than 60s) — prevents ghost nodes from occupying capacity
+  var requestTime = request.t
+  if (requestTime && Date.now() - requestTime > 60000) {
+    console.log('[' + ts() + '] [fireflower] SKIP request', (requestId || '').slice(-5), this.id.slice(-5) + ': stale (' + Math.round((Date.now() - requestTime) / 1000) + 's old)')
+    firebase.remove(snapshot.ref)
+    return
+  }
+
+  // Ignore requests from nodes that only want server transport (unless we ARE the server)
+  if (request.serverOnly && !this.isServer) {
+    this._log('SKIP request ' + requestId.slice(-5) + ': requester is serverOnly')
+    return
+  }
+
+  // Note: server-connected nodes ARE allowed to respond to requests. Previously they
+  // were blocked ("server-transport-no-respond") to prevent filling K capacity before
+  // upgrading. But this creates a deadlock: when root is at K capacity (e.g., relay +
+  // ghost node from external browser tab), ALL server-connected nodes refuse to respond
+  // to each other's upgrade requests, and root can't accept either. The existing circle
+  // prevention (ancestor chain, upstream check, downstream check in _attemptUpgrade)
+  // handles safety. Server nodes accepting children may need those children to reconnect
+  // after upgrade, but the system handles reconnection gracefully.
 
   var self = this
   var requestRef = snapshot.ref
@@ -378,11 +429,26 @@ Node.prototype._onrequest = function (snapshot) {
 
   // Root always accepts server node requests (server needs a direct root connection).
   // All other nodes respect the K limit.
+  // Count only connected peers toward K — pending (not-yet-connected) peers from stale
+  // Firebase requests must not block real connections. Stale requests occur when
+  // _reviewRequests replays requests from nodes that already found a parent but whose
+  // Firebase remove hasn't propagated yet. Without this fix, stale peers fill downstream
+  // to K, root unsubscribes, and real requests are missed for the entire connectionTimeout.
   var isServerRequest = request.isServer
-  if (Object.keys(this.downstream).length >= this.opts.K && !(this.root && isServerRequest)) {
-    this._log('SKIP request ' + requestId.slice(-5) + ': at K capacity (' + Object.keys(this.downstream).length + '/' + this.opts.K + ')')
+  var connectedCount = 0
+  for (var did in this.downstream) {
+    if (this.downstream[did].didConnect) connectedCount++
+  }
+  if (connectedCount >= this.opts.K && !(this.root && isServerRequest)) {
+    console.log('[' + ts() + '] [fireflower] SKIP request', requestId.slice(-5), this.id.slice(-5) + ': at K capacity (' + connectedCount + '/' + this.opts.K + ' connected)')
     return
   }
+  // Note: we intentionally do NOT cap pending (in-progress ICE) connections.
+  // Pending peers time out after connectionTimeout (5s) and get cleaned up.
+  // A pending cap was previously here but caused a critical bug: when serverOnly
+  // nodes publish requests, root responds with a P2P offer that the node ignores
+  // (it only wants server). The "zombie" pending peer blocks root from responding
+  // to legitimate upgrade requests. The connected count cap above is the real gate.
 
   // responders may accidentally recreate requests
   // these won't have an id though and can be removed
@@ -391,13 +457,21 @@ Node.prototype._onrequest = function (snapshot) {
     return
   }
 
-  // prevent circles and self-connections
-  if (peerId === this._mask || peerId === this.id) {
-    this._log('SKIP request ' + requestId.slice(-5) + ': self/circle (peerId=' + peerId.slice(-5) + ' mask=' + (this._mask || 'none').slice(-5) + ')')
+  // prevent self-connection
+  if (peerId === this.id) {
+    this._log('SKIP request ' + requestId.slice(-5) + ': self-connection')
     return
   }
 
-  // prevent direct circle: don't accept our own upstream as downstream
+  // prevent circles: check single mask, full ancestor chain, and direct upstream
+  if (peerId === this._mask) {
+    this._log('SKIP request ' + requestId.slice(-5) + ': mask circle (peerId=' + peerId.slice(-5) + ' mask=' + (this._mask || 'none').slice(-5) + ')')
+    return
+  }
+  if (this._ancestors && this._ancestors.indexOf(peerId) !== -1) {
+    this._log('SKIP request ' + requestId.slice(-5) + ': ancestor circle (peerId=' + peerId.slice(-5) + ' is in ancestor chain)')
+    return
+  }
   if (this.upstream && this.upstream.id === peerId) {
     this._log('SKIP request ' + requestId.slice(-5) + ': requester is our upstream')
     return
@@ -417,15 +491,24 @@ Node.prototype._onrequest = function (snapshot) {
     if (knownPeer.requestId === requestId) {
       return
     }
-    // if peer is already connected, this is likely an upgrade request — skip it
+    // if peer is already connected, this is likely an upgrade request — skip it.
+    // Exception: if the request is serverOnly, the peer is switching to server transport
+    // and needs a fresh server connection. Close the stale downstream and respond.
     if (knownPeer.didConnect) {
-      return
+      if (!request.serverOnly || !this.isServer) {
+        return
+      }
+      this._log('closing stale downstream for ' + peerId.slice(-5) + ' (switching to server)')
+      knownPeer.removeAllListeners()
+      knownPeer.close()
+      delete this.downstream[peerId]
     }
     // request ids don't match and peer never connected — must have disconnected without us noticing
     knownPeer.close()
   }
 
   debug(this.id + ' saw request by ' + peerId)
+  console.log('[' + ts() + '] [fireflower] RESPOND ' + this.id.slice(-5) + ' -> ' + peerId.slice(-5) + ' via: ' + (this._transport || 'root'))
 
   var responseRef = firebase.child(requestRef, 'responses/' + this.id)
 
@@ -458,6 +541,8 @@ Node.prototype._onrequest = function (snapshot) {
 }
 
 Node.prototype._onresponse = function (snapshot) {
+  var resp = snapshot.val()
+  console.log('[' + ts() + '] [fireflower] _onresponse', this.id.slice(-5), 'got response from', (snapshot.key || '').slice(-5), 'transport=' + (resp && resp.transport || 'p2p'), 'state=' + this.state)
   if (this.state !== 'requesting') {
     return
   }
@@ -499,16 +584,8 @@ Node.prototype._reviewResponses = function () {
     candidates[response.id] = response
   }
 
-  // Accept P2P root (unless serverOnly mode)
-  if (!this.serverOnly && p2pRoots.length) {
-    firebase.off(this._responsesRef, 'child_added', this._onresponse)
-    debug(this.id + ' accepting P2P root response')
-    this._acceptResponse(p2pRoots[0])
-    delete this._responses
-    return
-  }
-
-  // Split non-root candidates into P2P and server
+  // Split non-root candidates into P2P and server early so server-first
+  // can check for server candidates before accepting the P2P root.
   var p2pCandidates = []
   var serverCandidates = []
 
@@ -540,13 +617,26 @@ Node.prototype._reviewResponses = function () {
   p2pCandidates.sort(healthSort)
   serverCandidates.sort(healthSort)
 
-  // Server-first: when enabled, accept server response immediately for instant data.
-  // The P2P upgrade timer will handle switching to P2P later.
+  console.log('[' + ts() + '] [fireflower] _reviewResponses', this.id.slice(-5), 'p2pRoots=' + p2pRoots.length, 'p2pCandidates=' + p2pCandidates.length, 'serverCandidates=' + serverCandidates.length, 'serverOnly=' + this.serverOnly, 'serverFirst=' + this.serverFirst)
+
+  // Server-first: when enabled and a server candidate exists, prefer it over
+  // P2P root for instant data. The P2P upgrade timer handles switching later.
+  // This must be checked BEFORE the P2P root acceptance — otherwise root's
+  // response (which has no upstream) always wins and server-first never fires.
   if (this.serverFirst && !this.serverOnly && serverCandidates.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
     this._log('accepting server-first response from ' + serverCandidates[0].id.slice(-5))
     debug(this.id + ' accepting server-first candidate response')
     this._acceptResponse(serverCandidates[0])
+    delete this._responses
+    return
+  }
+
+  // Accept P2P root (unless serverOnly mode)
+  if (!this.serverOnly && p2pRoots.length) {
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
+    debug(this.id + ' accepting P2P root response')
+    this._acceptResponse(p2pRoots[0])
     delete this._responses
     return
   }
@@ -694,6 +784,8 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       peer.close()
     }
   }, this.connectionTimeout)
+
+  return peer
 }
 
 Node.prototype._stopUpgradeTimer = function () {
@@ -708,13 +800,22 @@ Node.prototype._stopUpgradeTimer = function () {
  * Called when serverOnly is toggled ON while connected via P2P.
  */
 Node.prototype._switchToServer = function () {
-  console.log('[' + ts() + '] [fireflower] switching to server', this.id)
+  this._log('switching to server')
 
   // Close P2P upstream
   var p2pUpstream = this.upstream
   this.upstream = null
   this._transport = null
   this._stopUpgradeTimer()
+
+  // Clear stale ancestor chain — we're leaving our position in the P2P tree.
+  // Without this, the old ancestors cause false positive circle detection when
+  // responding to other nodes' requests during the server switch.
+  this._updateMask({
+    mask: this.id,
+    level: 0x10000,
+    ancestors: []
+  })
 
   // Stop responding to requests temporarily
   firebase.off(this._requestsRef, 'child_added', this._onrequest)
@@ -739,17 +840,21 @@ Node.prototype._switchToServer = function () {
  */
 Node.prototype._attemptUpgrade = function () {
   if (this._transport !== 'server' || this.state !== 'connected') return
+  console.log('[' + ts() + '] [fireflower] _attemptUpgrade', this.id.slice(-5), 'transport=' + this._transport)
   debug(this.id + ' attempting P2P upgrade from server')
   var self = this
   var upgradeRequestRef = firebase.push(this._requestsRef, {
     id: this.id,
+    t: Date.now(),
     removal_flag: { removed: false }
   })
 
   var upgradeResponsesRef = firebase.child(upgradeRequestRef, 'responses')
   var upgradeTimeout = null
+  var upgradeAccepted = false
 
   var onUpgradeResponse = function (snapshot) {
+    if (upgradeAccepted) return
     var response = snapshot.val()
     response.id = snapshot.key
     response.ref = snapshot.ref
@@ -760,10 +865,12 @@ Node.prototype._attemptUpgrade = function () {
     // Don't accept our own downstream as upstream — would create a circle
     if (self.downstream[response.id]) return
 
+    upgradeAccepted = true
+    self._log('upgrade ACCEPT ' + self.id.slice(-5) + ' <- ' + response.id.slice(-5))
+
     // Got a P2P response — accept it
     firebase.off(upgradeResponsesRef, 'child_added', onUpgradeResponse)
     self._clearTimeout(upgradeTimeout)
-    firebase.remove(upgradeRequestRef)
 
     debug(self.id + ' got P2P upgrade response from ' + response.id)
 
@@ -774,7 +881,23 @@ Node.prototype._attemptUpgrade = function () {
     self.state = 'connecting'
     self.emit('statechange')
 
-    self._connectToPeer(false, response.id, null, response.ref)
+    var upgradePeer = self._connectToPeer(false, response.id, null, response.ref)
+
+    // Do NOT remove the upgrade request yet — both sides need the Firebase signal
+    // paths (requesterSignals/responderSignals under the response ref) for ICE
+    // negotiation. Removing the request deletes the entire subtree including signals.
+    // Clean up after the connection succeeds or fails.
+    if (upgradePeer) {
+      var cleanedUp = false
+      var cleanupRequest = function () {
+        if (!cleanedUp) {
+          cleanedUp = true
+          firebase.remove(upgradeRequestRef)
+        }
+      }
+      upgradePeer.on('connect', cleanupRequest)
+      upgradePeer.on('close', cleanupRequest)
+    }
 
     // Close server after initiating P2P (so we don't re-enter requesting state)
     // Remove listeners first to prevent _onpeerDisconnect from firing
@@ -788,6 +911,7 @@ Node.prototype._attemptUpgrade = function () {
 
   // Timeout: clean up and reschedule
   upgradeTimeout = this._setTimeout(function () {
+    self._log('upgrade TIMEOUT transport: ' + self._transport)
     firebase.off(upgradeResponsesRef, 'child_added', onUpgradeResponse)
     firebase.remove(upgradeRequestRef)
 
@@ -815,6 +939,7 @@ Node.prototype._attemptServerFallback = function () {
 
   var fallbackRequestRef = firebase.push(this._requestsRef, {
     id: this.id,
+    t: Date.now(),
     removal_flag: { removed: false }
   })
 
@@ -868,7 +993,7 @@ Node.prototype._connectServerFallback = function (response) {
       transport.close()
       return
     }
-    console.log('[' + ts() + '] [fireflower] server fallback connected', self.id)
+    self._log('server fallback connected')
     self._serverFallback = transport
   })
 
@@ -889,7 +1014,7 @@ Node.prototype._connectServerFallback = function (response) {
           self._serverFallbackHeartbeat = setTimeout(function () {
             // Server fallback went silent — close it
             if (self._serverFallback === transport) {
-              console.log('[' + ts() + '] [fireflower] server fallback heartbeat timeout', self.id)
+              self._log('server fallback heartbeat timeout')
               self._closeServerFallback()
             }
           }, HEARTBEAT_TIMEOUT)
@@ -919,7 +1044,7 @@ Node.prototype._promoteServerFallback = function () {
   this._transport = 'server'
   this._connectedAt = Date.now()
 
-  console.log('[' + ts() + '] [fireflower] promoted server fallback to primary', this.id, '->', fallback.id)
+  this._log('promoted server fallback to primary -> ' + fallback.id)
 
   // Switch notification handler to accept mask updates (was ignoring them)
   var self = this
@@ -1057,7 +1182,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   // Upgraded from server to P2P
   if (previousTransport === 'server' && this._transport === 'p2p') {
     this._stopUpgradeTimer()
-    console.log('[' + ts() + '] [fireflower] upgraded server -> p2p', this.id)
+    this._log('upgraded server -> p2p')
     debug(this.id + ' upgraded from server to P2P')
     this.emit('upgrade')
   }
@@ -1084,7 +1209,7 @@ Node.prototype._onupstreamConnect = function (peer) {
 
   // If serverOnly was set while we were connecting via P2P, switch now
   if (this.serverOnly && this._transport === 'p2p') {
-    console.log('[' + ts() + '] [fireflower] connected via P2P but serverOnly is set, switching to server', this.id)
+    this._log('connected via P2P but serverOnly is set, switching to server')
     this._switchToServer()
     return
   }
@@ -1097,7 +1222,7 @@ Node.prototype._onupstreamConnect = function (peer) {
     var self2 = this
     this._heartbeatTimeout = setTimeout(function () {
       if (self2.upstream === peer && !peer._closed) {
-        console.log('[' + ts() + '] [fireflower] initial heartbeat timeout, closing upstream', self2.id, '-x->', peer.id)
+        self2._log('initial heartbeat timeout, closing upstream -x-> ' + peer.id)
         peer.close()
       }
     }, HEARTBEAT_TIMEOUT)
@@ -1171,18 +1296,22 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   // attempt to reconnect if we were not disconnected intentionally
   if (!this._preventReconnect) {
 
-    // mask off our descendants
+    // mask off our descendants — _updateMask will append our id to ancestors
+    // when relaying, so children get [this.id] in their ancestor chain
     this._updateMask({
       mask: this.id,
-      level: 0x10000
+      level: 0x10000,
+      ancestors: []
     })
 
     // give our mask update a head start and/or wait longer if we timed out
     var self = this
     var delay = peer.didConnect ? 100 : this.connectionTimeout
+    this._log('scheduling reconnect delay=' + delay + 'ms')
 
     this._setTimeout(function () {
       if (!self._preventReconnect) {
+        self._log('reconnecting now')
         self.connect()
       }
     }, delay)
@@ -1190,39 +1319,65 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 }
 
 Node.prototype._ondownstreamConnect = function (peer) {
-  console.log('[' + ts() + '] [fireflower] downstream connected', this.id, '<-', peer.id, 'count:', Object.keys(this.downstream).length)
   // emit peerconnect
   debug(this.id + ' established downstream connection to ' + peer.id)
   this.emit('peerconnect', peer)
 
-  // stop responding to requests if peers > K
-  if (Object.keys(this.downstream).length >= this.opts.K) {
+  // stop responding to requests if connected peers >= K
+  var connected = 0
+  for (var cid in this.downstream) {
+    if (this.downstream[cid].didConnect) connected++
+  }
+  var childIds = []
+  for (var cid2 in this.downstream) {
+    if (this.downstream[cid2].didConnect) childIds.push(cid2.slice(-5))
+  }
+  console.log('[' + ts() + '] [fireflower] downstream connected', this.id.slice(-5), '<-', peer.id.slice(-5), 'connected:', connected + '/' + this.opts.K, connected >= this.opts.K ? '(FULL children: ' + childIds.join(',') + ')' : '')
+  if (connected >= this.opts.K) {
     firebase.off(this._requestsRef, 'child_added', this._onrequest)
   }
 
-  // make sure downstream has the most up to date mask
+  // make sure downstream has the most up to date mask (including ancestor chain)
   try {
     peer.notifications.send(JSON.stringify({
       mask: this._mask,
-      level: this._level || 0
+      level: this._level || 0,
+      ancestors: (this._ancestors || []).concat([this.id])
     }))
   } catch (err) {
     console.warn(this.id + ' failed to send initial mask update to ' + peer.id, err)
   }
 
   // start sending heartbeat to this child
+  // Also detect dead downstream: when the child closes its side of the connection,
+  // the data channel transitions to 'closed' long before ICE reaches 'failed' (~10s).
+  // By checking readyState on each heartbeat tick, we detect dead children within
+  // one heartbeat interval (2s) instead of waiting for ICE timeout.
   peer._heartbeatInterval = setInterval(function () {
+    if (peer._closed) {
+      clearInterval(peer._heartbeatInterval)
+      return
+    }
     if (peer.notifications && peer.notifications.readyState === 'open') {
       try {
         peer.notifications.send(JSON.stringify({ type: 'heartbeat', t: Date.now() }))
       } catch (err) {}
+    } else if (peer.didConnect && peer.notifications &&
+               (peer.notifications.readyState === 'closed' || peer.notifications.readyState === 'closing')) {
+      clearInterval(peer._heartbeatInterval)
+      peer._heartbeatInterval = null
+      peer.close()
     }
   }, HEARTBEAT_INTERVAL)
 }
 
 Node.prototype._ondownstreamDisconnect = function (peer) {
   if (peer.didConnect) {
-    console.log('[' + ts() + '] [fireflower] downstream disconnected', this.id, '-x-', peer.id)
+    var remainConnected = 0
+    for (var rid in this.downstream) {
+      if (rid !== peer.id && this.downstream[rid].didConnect) remainConnected++
+    }
+    console.log('[' + ts() + '] [fireflower] downstream disconnected', this.id, '-x-', peer.id, 'remaining:', remainConnected + '/' + this.opts.K)
   }
 
   // stop heartbeat to this child
@@ -1282,7 +1437,7 @@ Node.prototype._onheartbeat = function (peer) {
   // Tier 2: Kill — close upstream (existing behavior)
   this._heartbeatTimeout = setTimeout(function () {
     if (self.upstream === peer && !peer._closed) {
-      console.log('[' + ts() + '] [fireflower] heartbeat timeout, closing upstream', self.id, '-x->', peer.id)
+      self._log('heartbeat timeout, closing upstream -x-> ' + peer.id)
       peer.close()
     }
   }, HEARTBEAT_TIMEOUT)
@@ -1290,21 +1445,35 @@ Node.prototype._onheartbeat = function (peer) {
 
 Node.prototype._updateMask = function (data) {
   this._mask = data.mask
+  this._ancestors = data.ancestors || []
   this._level = ++data.level
 
-  debug(this.id + ' set mask to ' + this._mask + ' and level to ' + this._level)
+  debug(this.id + ' set mask to ' + this._mask + ' and level to ' + this._level + ' ancestors: ' + this._ancestors.length)
 
-  // oops we made a circle, fix that
+  // oops we made a circle, fix that — check both single mask and full ancestor list
   if (this.downstream[this._mask]) {
     debug(this.id + ' destroying accidental circle back to ' + this._mask)
     this.downstream[this._mask].close()
+  }
+  for (var a = 0; a < this._ancestors.length; a++) {
+    if (this.downstream[this._ancestors[a]]) {
+      debug(this.id + ' destroying accidental circle back to ancestor ' + this._ancestors[a])
+      this.downstream[this._ancestors[a]].close()
+    }
+  }
+
+  // Relay to children with our id appended to the ancestor chain
+  var relayData = {
+    mask: data.mask,
+    level: data.level,
+    ancestors: this._ancestors.concat([this.id])
   }
 
   for (var i in this.downstream) {
     var notifications = this.downstream[i].notifications
     if (notifications && notifications.readyState === 'open') {
       try {
-        notifications.send(JSON.stringify(data))
+        notifications.send(JSON.stringify(relayData))
       } catch (err) {
         console.warn(this.id + ' failed to relay mask update downstream', err)
       }
@@ -1406,8 +1575,25 @@ Node.prototype._onreportNeeded = function () {
 }
 
 Node.prototype._reviewRequests = function () {
-  if (this.state === 'connected' && Object.keys(this.downstream).length < this.opts.K) {
+  if (this.state !== 'connected') {
+    console.log('[' + ts() + '] [fireflower] _reviewRequests SKIP', this.id.slice(-5), 'state=' + this.state)
+    return
+  }
+
+  // Use connected count (not total) to match _ondownstreamConnect's stop check.
+  // Pending peers (ICE in progress) sit in this.downstream but shouldn't block
+  // the node from accepting new requests — _onrequest has its own capacity checks.
+  var connected = 0
+  var pending = 0
+  for (var id in this.downstream) {
+    if (this.downstream[id].didConnect) connected++
+    else pending++
+  }
+  if (connected < this.opts.K) {
+    console.log('[' + ts() + '] [fireflower] _reviewRequests SUBSCRIBING', this.id.slice(-5), 'connected=' + connected + '/' + this.opts.K, 'pending=' + pending)
     firebase.off(this._requestsRef, 'child_added', this._onrequest)
     firebase.onChildAdded(this._requestsRef, this._onrequest)
+  } else {
+    console.log('[' + ts() + '] [fireflower] _reviewRequests FULL', this.id.slice(-5), 'connected=' + connected + '/' + this.opts.K)
   }
 }

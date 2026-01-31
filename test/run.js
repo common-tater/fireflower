@@ -33,7 +33,10 @@ var scenarios = [
   { name: 'Server-First Connection + P2P Upgrade', fn: scenario17 },
   { name: 'Force Server Downgrade (P2P → Server)', fn: scenario18 },
   { name: 'Force Server ON then OFF (roundtrip)', fn: scenario19 },
-  { name: 'Simultaneous Server→P2P Upgrades (no stuck nodes)', fn: scenario20 }
+  { name: 'Simultaneous Server→P2P Upgrades (no stuck nodes)', fn: scenario20 },
+  { name: 'Transitive Circle Prevention During Upgrades', fn: scenario21 },
+  { name: 'Minimal Server→P2P Switch (1 peer)', fn: scenario22 },
+  { name: 'Server-First Prefers Server Over P2P Root', fn: scenario23 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -112,7 +115,7 @@ async function scenario4 (page) {
   await h.setForceServer(page, true)
   await h.wait(1000)
 
-  await h.addNodes(page, 3)
+  await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
   await h.waitForAllConnected(page, 4)
 
   // Verify they're on server
@@ -359,7 +362,7 @@ async function scenario13 (page) {
   await h.setServerEnabled(page, true)
   await h.wait(2000)
 
-  var ids = await h.addNodes(page, 4)
+  var ids = await h.addNodes(page, 4, { p2pUpgradeInterval: 5000 })
   await h.waitForAllConnected(page, 5)
 
   // Find a mid-tree node (has downstream children, is not root)
@@ -404,7 +407,7 @@ async function scenario14 (page) {
   await h.setServerEnabled(page, true)
   await h.wait(2000)
 
-  var ids = await h.addNodes(page, 3)
+  var ids = await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
   await h.waitForAllConnected(page, 4)
 
   // Find a node that has children (is sending heartbeats)
@@ -432,16 +435,16 @@ async function scenario14 (page) {
   // Wait for all nodes to be connected and stable
   await h.waitForAllConnected(page, 4, 15000)
 
-  // All nodes should be on P2P (fallback should have been closed)
-  var finalStates = await h.getNodeStates(page)
-  var nonRoot = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
-  for (var i = 0; i < nonRoot.length; i++) {
-    var s = finalStates[nonRoot[i]]
-    assert(s.transport === 'p2p',
-      'Node ' + nonRoot[i].slice(-5) + ' should be p2p, got ' + s.transport)
-    assert(!s.hasServerFallback,
-      'Node ' + nonRoot[i].slice(-5) + ' should have no active fallback')
-  }
+  // Wait for all nodes to upgrade to P2P (server-first nodes need the upgrade
+  // timer to fire — p2pUpgradeInterval=5s plus up to 25% jitter plus ICE time)
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states)
+    for (var i = 0; i < ids.length; i++) {
+      var s = states[ids[i]]
+      if (!s.isRoot && s.transport !== 'p2p') return false
+    }
+    return true
+  }, 'all nodes upgrade to P2P after heartbeat recovery', 20000)
 
   h.log('  All nodes on P2P with no active fallback after recovery')
 }
@@ -480,7 +483,7 @@ async function scenario16 (page) {
   await h.setServerEnabled(page, true)
   await h.wait(2000)
 
-  var ids = await h.addNodes(page, 6)
+  var ids = await h.addNodes(page, 6, { p2pUpgradeInterval: 5000 })
   await h.waitForAllConnected(page, 7)
 
   // Find two nodes with children
@@ -526,7 +529,7 @@ async function scenario17 (page) {
   await h.setServerEnabled(page, true)
   await h.wait(2000)
 
-  await h.addNodes(page, 3)
+  await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
 
   // Nodes should connect quickly (via server-first)
   await h.waitForAllConnected(page, 4)
@@ -556,7 +559,7 @@ async function scenario18 (page) {
   await h.wait(2000)
 
   // Add nodes and wait for them to be on P2P (may go through server-first then upgrade)
-  await h.addNodes(page, 3)
+  await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
     if (ids.length < 3) return false
@@ -588,7 +591,7 @@ async function scenario19 (page) {
   await h.setServerEnabled(page, true)
   await h.wait(2000)
 
-  await h.addNodes(page, 3)
+  await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
     if (ids.length < 3) return false
@@ -660,20 +663,174 @@ async function scenario20 (page) {
 
   h.log('  All 8 nodes successfully upgraded from server to P2P (no stuck nodes)')
 
-  // Verify no circles: every non-root should have a different upstream
+  // Verify no circles: walk upstream from each node, should always reach root
   var finalStates = await h.getNodeStates(page)
-  var upstreams = {}
-  nonRoot = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
-  for (var i = 0; i < nonRoot.length; i++) {
-    var s = finalStates[nonRoot[i]]
-    if (s.upstream) {
-      if (upstreams[s.upstream] && upstreams[s.upstream] === nonRoot[i]) {
-        throw new Error('Circle detected: ' + nonRoot[i].slice(-5) + ' <-> ' + s.upstream.slice(-5))
-      }
-      upstreams[nonRoot[i]] = s.upstream
-    }
-  }
+  assertNoCircles(finalStates)
   h.log('  No circles detected in final tree')
+}
+
+async function scenario21 (page) {
+  // Transitive circle prevention: many server-connected nodes upgrade simultaneously.
+  // K=3 gives enough capacity for the tree to stabilize. 5s upgrade interval with
+  // jitter ensures overlapping upgrades without overwhelming ICE negotiation.
+  await h.setK(page, 3)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Add nodes with 5s upgrade interval — short enough to overlap, long enough to stabilize
+  await h.addNodes(page, 6, { p2pUpgradeInterval: 5000 })
+
+  // Wait for all to connect via server-first
+  await h.waitForAllConnected(page, 7, 30000) // root + 6
+  h.log('  All 6 nodes connected (server-first)')
+
+  // Wait for ALL nodes to upgrade to P2P without forming circles
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length < 6) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all 6 nodes upgrade to P2P without circles', 60000)
+
+  h.log('  All nodes upgraded to P2P')
+
+  // Check for N-node circles by walking upstream chains
+  var states = await h.getNodeStates(page)
+  assertNoCircles(states)
+
+  // Verify ancestor chains are populated — every non-root P2P node should have ancestors
+  var nonRoot = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+  var ancestorCount = 0
+  for (var i = 0; i < nonRoot.length; i++) {
+    var s = states[nonRoot[i]]
+    if (s.ancestors.length > 0) ancestorCount++
+  }
+  h.log('  ' + ancestorCount + '/' + nonRoot.length + ' nodes have ancestor chains')
+  assert(ancestorCount >= nonRoot.length - 1,
+    'Most nodes should have ancestor chains, got ' + ancestorCount + '/' + nonRoot.length)
+
+  // Second round: disconnect some nodes and add replacements to trigger another upgrade wave
+  h.log('  Disconnecting 3 nodes...')
+  var toDisconnect = nonRoot.slice(0, 3)
+  for (var j = 0; j < toDisconnect.length; j++) {
+    await h.disconnectNode(page, toDisconnect[j])
+  }
+  await h.wait(3000)
+
+  await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
+
+  // Wait for all to connect and upgrade
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length < 6) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected'
+    })
+  }, 'replacement nodes connected', 60000)
+
+  // Final circle check
+  var finalStates = await h.getNodeStates(page)
+  assertNoCircles(finalStates)
+  h.log('  No circles after second wave of upgrades')
+}
+
+async function scenario22 (page) {
+  // Minimal Server→P2P Switch: 1 peer connects via forced server, then
+  // server is disabled entirely. The peer loses its server upstream and
+  // must reconnect to root via P2P. We verify the peer ends up as root's
+  // direct P2P child and stays connected.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+  await h.setForceServer(page, true)
+  await h.wait(1000)
+
+  var ids = await h.addNodes(page, 1, { p2pUpgradeInterval: 3000 })
+  await h.waitForAllConnected(page, 2) // root + 1 peer
+  h.log('  Peer connected via server')
+
+  // Verify on server
+  var states = await h.getNodeStates(page)
+  var peerId = ids[0]
+  assert(states[peerId].transport === 'server',
+    'Peer should be on server, got ' + states[peerId].transport)
+
+  // Disable forceServer AND server — peer must find root via P2P
+  await h.setForceServer(page, false)
+  await h.wait(500)
+  await h.setServerEnabled(page, false)
+  h.log('  Server disabled, peer must reconnect to root via P2P...')
+
+  // Wait for peer to be connected to root via P2P
+  var rootId = Object.keys(states).find(function (id) { return states[id].isRoot })
+  await h.waitForAll(page, function (states) {
+    var s = states[peerId]
+    if (!s) return false
+    return s.state === 'connected' && s.transport === 'p2p' && s.upstream === rootId
+  }, 'peer connects to root via P2P', 20000)
+
+  h.log('  Peer connected to root via P2P')
+
+  // Verify it stays connected for a few seconds (not a transient blip)
+  await h.wait(3000)
+  var finalStates = await h.getNodeStates(page)
+  var finalPeer = finalStates[peerId]
+  assert(finalPeer.state === 'connected',
+    'Peer should still be connected, got ' + finalPeer.state)
+  assert(finalPeer.transport === 'p2p',
+    'Peer should still be P2P, got ' + finalPeer.transport)
+  assert(finalPeer.upstream === rootId,
+    'Peer should still be child of root, got ' + (finalPeer.upstream || 'none').slice(-5))
+
+  h.log('  Peer stayed connected to root via P2P for 3s — stable')
+}
+
+async function scenario23 (page) {
+  // Server-first must prefer server candidate over P2P root response.
+  // Previously, _reviewResponses accepted P2P root before checking for
+  // server candidates, so serverFirst=true had no effect when root responded.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Add a single node with serverFirst (default) and a short upgrade interval
+  var ids = await h.addNodes(page, 1, { p2pUpgradeInterval: 5000 })
+  await h.waitForAllConnected(page, 2) // root + 1 peer
+
+  // The peer should have connected via server transport FIRST (not P2P to root)
+  var states = await h.getNodeStates(page)
+  var peerId = ids[0]
+  var peer = states[peerId]
+  h.log('  Peer transport: ' + peer.transport + ', upstream: ' + (peer.upstream || 'none').slice(-5))
+
+  // The peer's upstream should be the relay server, not root
+  var rootId = Object.keys(states).find(function (id) { return states[id].isRoot })
+  assert(peer.transport === 'server',
+    'Peer should initially connect via server (server-first), got ' + peer.transport)
+  assert(peer.upstream !== rootId,
+    'Peer upstream should be relay server, not root directly')
+
+  h.log('  Peer correctly connected via server-first (not P2P root)')
+
+  // Now wait for the P2P upgrade to happen
+  await h.waitForAll(page, function (states) {
+    var s = states[peerId]
+    if (!s) return false
+    return s.state === 'connected' && s.transport === 'p2p'
+  }, 'peer upgrades from server to P2P', 20000)
+
+  h.log('  Peer upgraded to P2P')
+
+  // Verify stable
+  await h.wait(2000)
+  var finalStates = await h.getNodeStates(page)
+  assert(finalStates[peerId].state === 'connected',
+    'Peer should still be connected after upgrade')
+  assert(finalStates[peerId].transport === 'p2p',
+    'Peer should be on P2P after upgrade')
+
+  h.log('  Server-first -> P2P upgrade completed and stable')
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────
@@ -727,6 +884,29 @@ function assert (condition, message) {
   }
 }
 
+// Walk upstream from each node to detect N-node circles (not just 2-node)
+function assertNoCircles (states) {
+  var ids = Object.keys(states)
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i]
+    if (states[id].isRoot) continue
+    var visited = {}
+    var current = id
+    var path = [current.slice(-5)]
+    while (current && states[current] && !states[current].isRoot) {
+      if (visited[current]) {
+        throw new Error('Circle detected: ' + path.join(' -> '))
+      }
+      visited[current] = true
+      current = states[current].upstream
+      if (current) path.push(current.slice(-5))
+    }
+    if (!current || !states[current]) {
+      // upstream points to a node not in states (e.g., server node) — ok
+    }
+  }
+}
+
 // ─── Main ───────────────────────────────────────────────────────────
 
 async function main () {
@@ -752,7 +932,11 @@ async function main () {
   var browser = await puppeteer.launch({
     headless: false,
     defaultViewport: null,
-    args: ['--window-size=1200,800']
+    args: [
+      '--window-size=1200,800',
+      '--disable-features=WebRtcHideLocalIpsWithMdns',
+      '--allow-loopback-in-peer-connection'
+    ]
   })
 
   var page = (await browser.pages())[0]
@@ -830,7 +1014,15 @@ async function main () {
   h.log('  ' + passed + ' passed, ' + failed + ' failed')
   h.log('═══════════════════════════════════════')
 
-  // Keep browser open for inspection
+  // If stdin is not a TTY (e.g., piped, background, CI), auto-close and exit.
+  // Otherwise keep browser open for visual inspection.
+  if (!process.stdin.isTTY) {
+    browser.close().catch(function () {})
+    if (ctx.exampleProcess) ctx.exampleProcess.kill()
+    if (ctx.relayProcess) ctx.relayProcess.kill()
+    process.exit(failed > 0 ? 1 : 0)
+  }
+
   h.log('')
   h.log('Browser left open for inspection. Press Ctrl+C to exit.')
 

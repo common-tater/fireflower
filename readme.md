@@ -31,7 +31,7 @@ $ npm install
 
 ## Development
 
-Start all 3 servers (example app, relay server, 3D visualizer) with one command:
+Start the example app and relay server:
 ```
 $ npm run dev
 ```
@@ -42,10 +42,12 @@ $ npm run dev
 | Relay server | 8082 | `npm run dev:relay` |
 | 3D Visualizer | 8081 | `npm run dev:viz` |
 
-Run just the example + visualizer without the relay server (pure P2P):
+Run just the example app without the relay server (pure P2P):
 ```
 $ npm run dev:p2p
 ```
+
+For the 3D visualizer, clone [fireflower-visualizer](https://github.com/common-tater/fireflower-visualizer) alongside this repo and run `npm run dev:viz`, or `npm run dev:all` to start everything together.
 
 ## Example
 ```
@@ -81,7 +83,7 @@ The example app includes a 2D canvas visualization. Open http://localhost:8081 f
 - Node colors reflect health score (green = healthy, red = struggling)
 
 ## Testing
-Automated test suite using Puppeteer with 12 scenarios:
+Automated test suite using Puppeteer with 23 scenarios:
 
 ```
 $ npm test           # Run all scenarios
@@ -96,13 +98,24 @@ Tests launch a visible Chrome browser so you can watch nodes connect in the 2D v
 3. Force Server Mode
 4. Force Server OFF → P2P Upgrade
 5. Server Toggle OFF → P2P Reconnect
-6. Rapid Joins
+6. Rapid Joins (K=2)
 7. K Change Mid-Session
 8. Node Departure & Recovery
 9. Mixed Transport Tree
 10. Large Tree (K=3)
-11. Server Restart Recovery
+11. WebSocket Reconnection
 12. Disconnect All & Reconnect
+13. Server Fallback on Mid-Tree Disconnect
+14. Heartbeat Pause → Fallback → Resume → Recovery
+15. Server Info Cached After Server Seen
+16. Rapid Disconnects with Server Fallback
+17. Server-First Connection + P2P Upgrade
+18. Force Server Downgrade (P2P → Server)
+19. Force Server ON then OFF (roundtrip)
+20. Simultaneous Server→P2P Upgrades
+21. Transitive Circle Prevention During Upgrades
+22. Minimal Server→P2P Switch
+23. Server-First Prefers Server Over P2P Root
 
 ## Build
 ```
@@ -213,7 +226,7 @@ A configuration error occurred.
 | `channel-shim.js` | DataChannel-like shim for WebSocket |
 | `relay-server.js` | WebSocket relay server |
 | `example/` | 2D visualizer demo app |
-| `visualizer/` | 3D Three.js visualizer (submodule) |
+| [`fireflower-visualizer`](https://github.com/common-tater/fireflower-visualizer) | 3D Three.js visualizer (separate repo) |
 | `test/` | Automated Puppeteer test suite |
 
 ## Browser Support
