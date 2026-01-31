@@ -19,8 +19,19 @@ function ts () {
   return d.toISOString().slice(11, 23)
 }
 
-var HEARTBEAT_INTERVAL = 3000  // parent sends every 3s
-var HEARTBEAT_TIMEOUT = 8000   // child considers dead after 8s silence
+// Heartbeat: parent sends a ping to each child over the notifications channel.
+// If the child doesn't hear from the parent within HEARTBEAT_TIMEOUT, it closes
+// the connection and reconnects. This catches mid-tree disconnects faster than
+// waiting for ICE to transition through disconnected→failed (~10-15s).
+//
+// Tuning guide:
+//   HEARTBEAT_INTERVAL — how often the parent sends (lower = faster detection, more traffic)
+//   HEARTBEAT_TIMEOUT  — how long the child waits before declaring the parent dead
+//     Should be at least 2× INTERVAL to tolerate a missed beat (network jitter, CPU throttle).
+//     Too low → false positives (especially in background tabs where timers are throttled).
+//     Too high → slow detection, defeating the purpose.
+var HEARTBEAT_INTERVAL = 2000  // ms — parent sends every 2s
+var HEARTBEAT_TIMEOUT = 5000   // ms — child considers parent dead after 5s of silence
 
 function deepMerge (target, source) {
   for (var key in source) {
