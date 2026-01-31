@@ -1102,6 +1102,94 @@ Node.prototype._closeServerFallback = function () {
   fallback.close()
 }
 
+/**
+ * Connect directly to the server without going through Firebase request/response.
+ * Used when a P2P upstream dies and we have cached _serverInfo — gives orphaned
+ * nodes instant data through the relay server while P2P upgrade happens later.
+ */
+Node.prototype._connectToServerDirect = function () {
+  var self = this
+  var serverInfo = this._serverInfo
+
+  this.state = 'connecting'
+  this.emit('statechange')
+
+  var transport = new ServerTransport({
+    url: serverInfo.serverUrl,
+    nodeId: this.id,
+    initiator: true
+  })
+
+  transport.id = serverInfo.id || 'server'
+  transport.transportType = 'server'
+
+  transport.on('connect', function () {
+    if (self._preventReconnect || self.state !== 'connecting') {
+      transport.removeAllListeners()
+      transport.close()
+      return
+    }
+
+    self._log('direct server connection established')
+    console.log('[' + ts() + '] [fireflower] direct server connected', self.id, 'transport: server')
+
+    transport.didConnect = true
+    self.upstream = transport
+    self._transport = 'server'
+    self._connectedAt = Date.now()
+    self.state = 'connected'
+    self.emit('statechange')
+    self.emit('connect', transport)
+    self.emit('fallback')
+
+    // Wire close handler
+    transport.on('close', self._onpeerDisconnect.bind(self, transport, null))
+
+    // Handle notifications channel
+    transport.on('datachannel', function (channel) {
+      if (channel.label === 'notifications') {
+        channel.onmessage = function (evt) {
+          var data = JSON.parse(evt.data)
+          if (data.type === 'heartbeat') {
+            self._onheartbeat(transport)
+          } else {
+            self._onmaskUpdate(evt)
+          }
+        }
+      }
+    })
+
+    // Start P2P upgrade timer
+    if (self.p2pUpgradeInterval && !self.serverOnly) {
+      self._stopUpgradeTimer()
+      var jitter = Math.floor(Math.random() * self.p2pUpgradeInterval * 0.25)
+      self._upgradeTimer = self._setTimeout(function () {
+        self._attemptUpgrade()
+      }, self.p2pUpgradeInterval + jitter)
+    }
+
+    // Resume responding to requests
+    self._reviewRequests()
+  })
+
+  transport.on('close', function () {
+    if (self.upstream === transport) {
+      self._onpeerDisconnect(transport, null)
+    } else if (self.state === 'connecting') {
+      // Server connection failed — fall back to normal reconnect
+      self._log('direct server connection failed, falling back to normal reconnect')
+      self.state = 'disconnected'
+      self.emit('statechange')
+      var delay = 100
+      self._setTimeout(function () {
+        if (!self._preventReconnect) {
+          self.connect()
+        }
+      }, delay)
+    }
+  })
+}
+
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   debug(this.id + ' peer connected: ' + peer.id)
   peer.didConnect = true
@@ -1282,42 +1370,49 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   // Close any pending server fallback attempt
   this._closeServerFallback()
 
-  // change state -> disconnected
-  if (this.state !== 'disconnected') {
-    debug(this.id + ' lost upstream connection to ' + peer.id)
-  }
-
-  this.state = 'disconnected'
-  this.emit('statechange')
-
   // emit disconnect if we were connected
   if (peer.didConnect) {
     this.emit('disconnect', peer)
   }
 
   // attempt to reconnect if we were not disconnected intentionally
-  if (!this._preventReconnect) {
+  if (this._preventReconnect) return
 
-    // mask off our descendants — _updateMask will append our id to ancestors
-    // when relaying, so children get [this.id] in their ancestor chain
-    this._updateMask({
-      mask: this.id,
-      level: 0x10000,
-      ancestors: []
-    })
+  // mask off our descendants — _updateMask will append our id to ancestors
+  // when relaying, so children get [this.id] in their ancestor chain
+  this._updateMask({
+    mask: this.id,
+    level: 0x10000,
+    ancestors: []
+  })
 
-    // give our mask update a head start and/or wait longer if we timed out
-    var self = this
-    var delay = peer.didConnect ? 100 : this.connectionTimeout
-    this._log('scheduling reconnect delay=' + delay + 'ms')
-
-    this._setTimeout(function () {
-      if (!self._preventReconnect) {
-        self._log('reconnecting now')
-        self.connect()
-      }
-    }, delay)
+  // Fast server reconnect: if we know about the server, connect directly
+  // without going through the Firebase request/response cycle. This gives
+  // orphaned nodes instant data while the P2P upgrade timer handles switching.
+  if (peer.didConnect && this._serverInfo && this._serverInfo.serverUrl && !this.serverOnly && this.serverFirst) {
+    this._log('fast server reconnect via ' + this._serverInfo.serverUrl)
+    console.log('[' + ts() + '] [fireflower] fast server reconnect', this.id, 'via', this._serverInfo.serverUrl)
+    this._connectToServerDirect()
+    return
   }
+
+  // Normal reconnect: publish Firebase request and wait for responses
+  if (this.state !== 'disconnected') {
+    debug(this.id + ' lost upstream connection to ' + peer.id)
+  }
+  this.state = 'disconnected'
+  this.emit('statechange')
+
+  var self = this
+  var delay = peer.didConnect ? 100 : this.connectionTimeout
+  this._log('scheduling reconnect delay=' + delay + 'ms')
+
+  this._setTimeout(function () {
+    if (!self._preventReconnect) {
+      self._log('reconnecting now')
+      self.connect()
+    }
+  }, delay)
 }
 
 Node.prototype._ondownstreamConnect = function (peer) {
