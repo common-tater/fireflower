@@ -38,6 +38,8 @@ $ npm run example
 
 Open http://localhost:8080 in your browser. Click the canvas to add peer nodes and watch the K-ary tree form in real-time. Works on desktop browsers and mobile (Chrome on Android, Safari on iOS).
 
+Use `?path=<name>` to run on a different Firebase path (default: `tree`). Multiple tabs with different paths are fully independent trees.
+
 ### Relay Server
 Start the WebSocket relay server for server fallback transport:
 ```
@@ -79,7 +81,7 @@ $ npm test           # Run all scenarios
 $ node test/run.js 3 # Run a single scenario
 ```
 
-Tests launch a visible Chrome browser so you can watch nodes connect in the 2D visualizer while scenarios execute. The test runner manages the example server, relay server, and Firebase state automatically.
+Tests launch a visible Chrome browser so you can watch nodes connect in the 2D visualizer while scenarios execute. The test runner manages the example server, relay server, and Firebase state automatically. Tests use an isolated Firebase path (`test-tree`) so they don't interfere with manual testing.
 
 ### Scenarios
 1. Basic P2P Tree (K=2)

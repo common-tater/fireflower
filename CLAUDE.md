@@ -25,9 +25,12 @@ The **responder** (parent node) is always the WebRTC **initiator** (creates the 
 ### Data channels
 Two data channels per connection:
 - `_default` — general data channel
-- `notifications` — used for mask/config updates from parent to child
+- `notifications` — used for mask/config updates and heartbeat from parent to child
 
 Both channels must be created BEFORE calling `peer.negotiate()` so they are included in the SDP offer.
+
+### Heartbeat (disconnect detection)
+Parents send `{ type: 'heartbeat', t: <timestamp> }` every 3s over the `notifications` channel. Children start an 8s timeout after the first heartbeat; if it expires, they close the upstream peer and reconnect. This detects mid-tree node loss in ~8s worst case (down from ~10-15s with ICE timeout alone). The child's `notifications.onmessage` handler checks for `data.type === 'heartbeat'` vs mask updates (which have no `type` field). Heartbeat is purely P2P — no server involvement. Cleanup happens in `_ondownstreamDisconnect`, `_onupstreamDisconnect`, and `disconnect()`.
 
 ### Health system
 Each node computes a health score (0-100) from:
@@ -98,6 +101,9 @@ cd visualizer && npm start
 node relay-server.js
 ```
 
+### Configurable Firebase path
+The example app reads `?path=<name>` from the URL query string, defaulting to `'tree'`. This enables multiple independent trees on the same Firebase database — each path gets its own requests, reports, configuration, and node space. The 3D visualizer also supports path via URL pathname (e.g., `http://localhost:8081/my-path`).
+
 ## Testing
 
 Automated test suite using Puppeteer that runs 12 scenarios with a visible browser:
@@ -114,11 +120,13 @@ The test runner:
 4. Runs each scenario sequentially with automatic reset between them
 5. Reports pass/fail for each scenario
 
-Open the 3D visualizer at `http://localhost:8081` in a separate tab to watch both views.
+Tests use the isolated Firebase path `test-tree` (not the default `tree`) so they don't interfere with manual testing. The relay server is also started with `--firebase-path test-tree`.
+
+Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to watch tests in 3D.
 
 ### Test files
 - `test/run.js` — Main test runner with all 12 scenarios
-- `test/helpers.js` — Shared utilities (addNodes, waitForAllConnected, setK, etc.)
+- `test/helpers.js` — Shared utilities (addNodes, waitForAllConnected, setK, etc.); `TEST_PATH` constant defines the isolated path
 
 ### Scenarios
 1. Basic P2P Tree (K=2) — 6 nodes, all P2P

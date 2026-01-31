@@ -10,6 +10,7 @@ function getDb () {
   return _firebase.db
 }
 
+const TEST_PATH = 'test-tree'  // isolated Firebase path for tests
 const STEP_DELAY = 3000  // delay between adding nodes (ms)
 const POLL_INTERVAL = 500 // how often to check state (ms)
 const DEFAULT_TIMEOUT = 30000 // max wait time for assertions (ms)
@@ -181,12 +182,12 @@ async function resetAll (page) {
 async function clearFirebase () {
   var db = getDb()
   await Promise.all([
-    remove(ref(db, 'tree/reports')),
-    remove(ref(db, 'tree/requests'))
+    remove(ref(db, TEST_PATH + '/reports')),
+    remove(ref(db, TEST_PATH + '/requests'))
   ])
   // Set serverEnabled=false so relay server doesn't interfere during page load
-  await set(ref(db, 'tree/configuration/serverEnabled'), false)
-  await set(ref(db, 'tree/configuration/serverOnly'), false)
+  await set(ref(db, TEST_PATH + '/configuration/serverEnabled'), false)
+  await set(ref(db, TEST_PATH + '/configuration/serverOnly'), false)
 }
 
 async function waitForRootReady (page, timeout) {
@@ -217,5 +218,6 @@ module.exports = {
   resetAll: resetAll,
   clearFirebase: clearFirebase,
   waitForRootReady: waitForRootReady,
-  STEP_DELAY: STEP_DELAY
+  STEP_DELAY: STEP_DELAY,
+  TEST_PATH: TEST_PATH
 }

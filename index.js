@@ -14,6 +14,14 @@ var firebase = require('firebase/database')
 
 var database = null
 
+function ts () {
+  var d = new Date()
+  return d.toISOString().slice(11, 23)
+}
+
+var HEARTBEAT_INTERVAL = 3000  // parent sends every 3s
+var HEARTBEAT_TIMEOUT = 8000   // child considers dead after 8s silence
+
 function deepMerge (target, source) {
   for (var key in source) {
     if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
@@ -173,14 +181,23 @@ Node.prototype.disconnect = function () {
   // stop upgrade timer
   this._stopUpgradeTimer()
 
+  // stop heartbeat timeout (child side)
+  if (this._heartbeatTimeout) {
+    clearTimeout(this._heartbeatTimeout)
+    this._heartbeatTimeout = null
+  }
+
   // close upstream connection
   if (this.upstream) {
     this.upstream.close()
     this.upstream = null
   }
 
-  // close downstream connections
+  // close downstream connections (also clears their heartbeat intervals)
   for (var i in this.downstream) {
+    if (this.downstream[i]._heartbeatInterval) {
+      clearInterval(this.downstream[i]._heartbeatInterval)
+    }
     this.downstream[i].close()
   }
   this.downstream = {}
@@ -206,11 +223,11 @@ Node.prototype._onconfig = function (snapshot) {
   var serverEnabled = this.opts.serverEnabled !== false
   this.serverOnly = this.isServer ? false : (serverEnabled && this.opts.serverOnly) || false
 
-  console.log('[fireflower] config changed', this.id, JSON.stringify(data))
+  console.log('[' + ts() + '] [fireflower] config changed', this.id, JSON.stringify(data))
 
   // If serverOnly was just turned off while connected via server, start upgrade timer
   if (wasServerOnly && !this.serverOnly && this._transport === 'server' && this.state === 'connected') {
-    console.log('[fireflower] serverOnly disabled, starting P2P upgrade', this.id)
+    console.log('[' + ts() + '] [fireflower] serverOnly disabled, starting P2P upgrade', this.id)
     this._stopUpgradeTimer()
     var self = this
     this._upgradeTimer = this._setTimeout(function () {
@@ -230,7 +247,7 @@ Node.prototype._doconnect = function () {
     // emit connect but in nextTick
     this._setTimeout(function () {
       // change state -> connected
-      console.log('[fireflower] connected as root', self.id)
+      console.log('[' + ts() + '] [fireflower] connected as root', self.id)
       debug(self.id + ' connected as root')
       self._connectedAt = Date.now()
       self.state = 'connected'
@@ -539,7 +556,12 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       if (channel.label === 'notifications') {
         peer.notifications = channel
         peer.notifications.onmessage = function (evt) {
-          self._onmaskUpdate(evt)
+          var data = JSON.parse(evt.data)
+          if (data.type === 'heartbeat') {
+            self._onheartbeat(peer)
+          } else {
+            self._onmaskUpdate(evt)
+          }
         }
       }
     })
@@ -718,7 +740,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   // Upgraded from server to P2P
   if (previousTransport === 'server' && this._transport === 'p2p') {
     this._stopUpgradeTimer()
-    console.log('[fireflower] upgraded server -> p2p', this.id)
+    console.log('[' + ts() + '] [fireflower] upgraded server -> p2p', this.id)
     debug(this.id + ' upgraded from server to P2P')
     this.emit('upgrade')
   }
@@ -734,7 +756,7 @@ Node.prototype._onupstreamConnect = function (peer) {
   }
 
   // change state -> connected
-  console.log('[fireflower] upstream connected', this.id, '->', peer.id, 'transport:', this._transport)
+  console.log('[' + ts() + '] [fireflower] upstream connected', this.id, '->', peer.id, 'transport:', this._transport)
   debug(this.id + ' established upstream connection to ' + peer.id)
   this.state = 'connected'
   this.emit('statechange')
@@ -745,8 +767,15 @@ Node.prototype._onupstreamConnect = function (peer) {
 }
 
 Node.prototype._onupstreamDisconnect = function (peer) {
-  console.log('[fireflower] upstream disconnected', this.id, '-x->', peer.id, 'transport:', peer.transportType)
+  console.log('[' + ts() + '] [fireflower] upstream disconnected', this.id, '-x->', peer.id, 'transport:', peer.transportType)
   debug(this.id + ' lost upstream ' + peer.id)
+
+  // stop heartbeat timeout
+  if (this._heartbeatTimeout) {
+    clearTimeout(this._heartbeatTimeout)
+    this._heartbeatTimeout = null
+  }
+
   // stop responding to new requests
   firebase.off(this._requestsRef, 'child_added', this._onrequest)
 
@@ -796,7 +825,7 @@ Node.prototype._onupstreamDisconnect = function (peer) {
 }
 
 Node.prototype._ondownstreamConnect = function (peer) {
-  console.log('[fireflower] downstream connected', this.id, '<-', peer.id, 'count:', Object.keys(this.downstream).length)
+  console.log('[' + ts() + '] [fireflower] downstream connected', this.id, '<-', peer.id, 'count:', Object.keys(this.downstream).length)
   // emit peerconnect
   debug(this.id + ' established downstream connection to ' + peer.id)
   this.emit('peerconnect', peer)
@@ -815,10 +844,26 @@ Node.prototype._ondownstreamConnect = function (peer) {
   } catch (err) {
     console.warn(this.id + ' failed to send initial mask update to ' + peer.id, err)
   }
+
+  // start sending heartbeat to this child
+  peer._heartbeatInterval = setInterval(function () {
+    if (peer.notifications && peer.notifications.readyState === 'open') {
+      try {
+        peer.notifications.send(JSON.stringify({ type: 'heartbeat', t: Date.now() }))
+      } catch (err) {}
+    }
+  }, HEARTBEAT_INTERVAL)
 }
 
 Node.prototype._ondownstreamDisconnect = function (peer) {
-  console.log('[fireflower] downstream disconnected', this.id, '-x-', peer.id, 'didConnect:', peer.didConnect)
+  console.log('[' + ts() + '] [fireflower] downstream disconnected', this.id, '-x-', peer.id, 'didConnect:', peer.didConnect)
+
+  // stop heartbeat to this child
+  if (peer._heartbeatInterval) {
+    clearInterval(peer._heartbeatInterval)
+    peer._heartbeatInterval = null
+  }
+
   // remove from lookup
   delete this.downstream[peer.id]
   delete this._pendingAdapters[peer.id]
@@ -844,6 +889,19 @@ Node.prototype._ondownstreamDisconnect = function (peer) {
 
 Node.prototype._onmaskUpdate = function (evt) {
   this._updateMask(JSON.parse(evt.data))
+}
+
+Node.prototype._onheartbeat = function (peer) {
+  if (this._heartbeatTimeout) {
+    clearTimeout(this._heartbeatTimeout)
+  }
+  var self = this
+  this._heartbeatTimeout = setTimeout(function () {
+    if (self.upstream === peer && !peer._closed) {
+      console.log('[' + ts() + '] [fireflower] heartbeat timeout, closing upstream', self.id, '-x->', peer.id)
+      peer.close()
+    }
+  }, HEARTBEAT_TIMEOUT)
 }
 
 Node.prototype._updateMask = function (data) {

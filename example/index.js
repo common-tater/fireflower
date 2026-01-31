@@ -11,6 +11,10 @@ var { ref, child, get } = require('firebase/database')
 var fireflower = require('../')(firebase.db)
 var Graph = require('./src/graph')
 
+// Allow configurable Firebase path via URL query parameter
+var urlParams = new URLSearchParams(window.location.search)
+var treePath = urlParams.get('path') || 'tree'
+
 var knumber = document.querySelector('#k-number input')
 knumber.addEventListener('change', onkchanged)
 
@@ -26,14 +30,14 @@ resetBtn.addEventListener('click', function () {
   if (window.root) {
     window.root.disconnect()
   }
-  remove(ref(firebase.db, 'tree/requests'))
-  remove(ref(firebase.db, 'tree/reports'))
+  remove(ref(firebase.db, treePath + '/requests'))
+  remove(ref(firebase.db, treePath + '/reports'))
 })
 
 // Server toggle: enables/disables the relay server via Firebase config
 var serverToggle = document.querySelector('#server-toggle')
 var serverCheckbox = serverToggle.querySelector('input')
-var configRef = ref(firebase.db, 'tree/configuration/serverEnabled')
+var configRef = ref(firebase.db, treePath + '/configuration/serverEnabled')
 
 onValue(configRef, function (snapshot) {
   var enabled = snapshot.val()
@@ -51,7 +55,7 @@ serverCheckbox.addEventListener('change', function () {
 // Force Server toggle: new clicked nodes only accept server responses
 var forceServerToggle = document.querySelector('#force-server-toggle')
 var forceServerCheckbox = forceServerToggle.querySelector('input')
-var forceServerConfigRef = ref(firebase.db, 'tree/configuration/serverOnly')
+var forceServerConfigRef = ref(firebase.db, treePath + '/configuration/serverOnly')
 
 onValue(forceServerConfigRef, function (snapshot) {
   var enabled = !!snapshot.val()
@@ -72,7 +76,7 @@ forceServerCheckbox.addEventListener('change', function () {
 })
 
 // Check if a root node already exists before deciding to be root
-var treeRef = ref(firebase.db, 'tree/reports')
+var treeRef = ref(firebase.db, treePath + '/reports')
 get(treeRef).then(function(snapshot) {
   var isRoot = true
 
@@ -93,7 +97,7 @@ get(treeRef).then(function(snapshot) {
 
   console.log(isRoot ? 'Becoming ROOT node' : 'Connecting as CHILD node')
 
-  window.root = fireflower('tree', {
+  window.root = fireflower(treePath, {
     root: isRoot,
     reportInterval: 2500
   })
@@ -109,13 +113,13 @@ get(treeRef).then(function(snapshot) {
 
   window.root.once('connect', function () {
     console.log('Transport:', window.root.transport)
-    window.graph = new Graph('tree', window.root)
+    window.graph = new Graph(treePath, window.root)
     onkchanged()
   })
 }).catch(function(err) {
   console.error('Error checking for root:', err)
 
-  window.root = fireflower('tree', {
+  window.root = fireflower(treePath, {
     root: true,
     reportInterval: 2500
   })
@@ -123,7 +127,7 @@ get(treeRef).then(function(snapshot) {
 
   window.root.once('connect', function () {
     console.log('Transport:', window.root.transport)
-    window.graph = new Graph('tree', window.root)
+    window.graph = new Graph(treePath, window.root)
     onkchanged()
   })
 })
