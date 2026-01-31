@@ -29,11 +29,29 @@ Scalable broadcasting for streams of live data.
 $ npm install
 ```
 
+## Development
+
+Start all 3 servers (example app, relay server, 3D visualizer) with one command:
+```
+$ npm run dev
+```
+
+| Server | Port | Script |
+|--------|------|--------|
+| Example app (2D) | 8080 | `npm run dev:app` |
+| Relay server | 8082 | `npm run dev:relay` |
+| 3D Visualizer | 8081 | `npm run dev:viz` |
+
+Run just the example + visualizer without the relay server (pure P2P):
+```
+$ npm run dev:p2p
+```
+
 ## Example
 ```
 $ cp example/firebase-config.example.js example/firebase-config.js
 # Edit example/firebase-config.js with your Firebase project config
-$ npm run example
+$ npm run dev
 ```
 
 Open http://localhost:8080 in your browser. Click the canvas to add peer nodes and watch the K-ary tree form in real-time. Works on desktop browsers and mobile (Chrome on Android, Safari on iOS).
@@ -41,11 +59,6 @@ Open http://localhost:8080 in your browser. Click the canvas to add peer nodes a
 Use `?path=<name>` to run on a different Firebase path (default: `tree`). Multiple tabs with different paths are fully independent trees.
 
 ### Relay Server
-Start the WebSocket relay server for server fallback transport:
-```
-$ node relay-server.js
-```
-
 The relay server joins the tree as a level-1 child of root via WebRTC, then accepts client connections via WebSocket. Nodes that can't establish P2P connections will fall back to the server automatically.
 
 Options:
@@ -61,13 +74,7 @@ The example app provides UI controls:
 - **Reset** — Disconnect all nodes and clear Firebase data
 
 ## Visualization
-The example app includes a 2D canvas visualization. For a 3D visualization of the network topology:
-
-```
-$ cd visualizer && npm install && npm start
-```
-
-Open http://localhost:8081 to see the live 3D tree with physics simulation.
+The example app includes a 2D canvas visualization. Open http://localhost:8081 for a 3D visualization of the network topology.
 
 - Gray lines = P2P connections
 - Green lines = server connections

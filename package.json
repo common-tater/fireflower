@@ -10,6 +10,7 @@
     "inherits": "^2.0.4"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "esbuild": "^0.24.0",
     "puppeteer": "^24.36.1"
   },
@@ -20,6 +21,11 @@
   "scripts": {
     "build": "esbuild example/index.js --bundle --outfile=example/build.js --platform=browser --sourcemap",
     "example": "npm run build && node example/server.js",
+    "dev": "npm run build && concurrently -k -n app,relay,viz -c blue,green,magenta \"node example/server.js\" \"node relay-server.js\" \"npm start --prefix visualizer\"",
+    "dev:app": "npm run build && node example/server.js",
+    "dev:relay": "node relay-server.js",
+    "dev:viz": "npm start --prefix visualizer",
+    "dev:p2p": "npm run build && concurrently -k -n app,viz -c blue,magenta \"node example/server.js\" \"npm start --prefix visualizer\"",
     "test": "node test/run.js"
   },
   "repository": "https://github.com/common-tater/fireflower",
