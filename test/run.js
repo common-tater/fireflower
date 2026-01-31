@@ -406,7 +406,7 @@ async function scenario14 (page) {
   await h.setServerEnabled(page, true)
   await h.wait(2000)
 
-  var ids = await h.addNodes(page, 3)
+  var ids = await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
   await h.waitForAllConnected(page, 4)
 
   // Find a node that has children (is sending heartbeats)
@@ -433,6 +433,11 @@ async function scenario14 (page) {
 
   // Wait for all nodes to be connected and stable
   await h.waitForAllConnected(page, 4, 15000)
+
+  // Wait extra time for any server-first nodes to upgrade to P2P
+  // (if a child hit the heartbeat timeout race, it reconnects via server-first
+  // and needs the upgrade timer to fire before switching to P2P)
+  await h.wait(8000)
 
   // All nodes should be on P2P (fallback should have been closed)
   var finalStates = await h.getNodeStates(page)
