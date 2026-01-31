@@ -57,7 +57,9 @@ async function getNodeStates (page) {
         transport: root.model.transport || null,
         upstream: root.model.upstream ? root.model.upstream.id : null,
         downstreamCount: Object.keys(root.model.downstream || {}).length,
-        isRoot: true
+        isRoot: true,
+        hasServerFallback: !!root.model._serverFallback,
+        hasServerInfo: !!root.model._serverInfo
       }
     }
 
@@ -72,11 +74,56 @@ async function getNodeStates (page) {
         transport: node.model.transport || null,
         upstream: node.model.upstream ? node.model.upstream.id : null,
         downstreamCount: Object.keys(node.model.downstream || {}).length,
-        isRoot: false
+        isRoot: false,
+        hasServerFallback: !!node.model._serverFallback,
+        hasServerInfo: !!node.model._serverInfo
       }
     }
     return result
   })
+}
+
+async function pauseHeartbeats (page, nodeId) {
+  log('  Pausing heartbeats from node ' + nodeId.slice(-5))
+  return page.evaluate(function (nodeId) {
+    var node = window.graph.nodes[nodeId]
+    if (!node) return
+    var model = node.model
+    var saved = {}
+    for (var id in model.downstream) {
+      var peer = model.downstream[id]
+      if (peer._heartbeatInterval) {
+        saved[id] = true
+        clearInterval(peer._heartbeatInterval)
+        peer._heartbeatInterval = null
+      }
+    }
+    // Stash for resumeHeartbeats
+    model._pausedHeartbeats = saved
+  }, nodeId)
+}
+
+async function resumeHeartbeats (page, nodeId) {
+  log('  Resuming heartbeats from node ' + nodeId.slice(-5))
+  return page.evaluate(function (nodeId) {
+    var node = window.graph.nodes[nodeId]
+    if (!node) return
+    var model = node.model
+    var saved = model._pausedHeartbeats || {}
+    for (var id in model.downstream) {
+      var peer = model.downstream[id]
+      if (saved[id] && peer.notifications && !peer._heartbeatInterval) {
+        ;(function (p) {
+          p._heartbeatInterval = setInterval(function () {
+            if (p.notifications && p.notifications.readyState === 'open') {
+              try { p.notifications.send(JSON.stringify({ type: 'heartbeat', t: Date.now() })) } catch (e) {}
+            }
+          }, 2000)
+        })(peer)
+      }
+    }
+    delete model._pausedHeartbeats
+  }, nodeId)
 }
 
 async function waitForAll (page, predicate, message, timeout) {
@@ -224,6 +271,8 @@ module.exports = {
   clearFirebase: clearFirebase,
   clearFirebaseRequests: clearFirebaseRequests,
   waitForRootReady: waitForRootReady,
+  pauseHeartbeats: pauseHeartbeats,
+  resumeHeartbeats: resumeHeartbeats,
   STEP_DELAY: STEP_DELAY,
   TEST_PATH: TEST_PATH
 }

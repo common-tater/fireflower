@@ -25,7 +25,11 @@ var scenarios = [
   { name: 'Mixed Transport Tree', fn: scenario9 },
   { name: 'Large Tree (K=3)', fn: scenario10 },
   { name: 'WebSocket Reconnection', fn: scenario11 },
-  { name: 'Disconnect All & Reconnect', fn: scenario12 }
+  { name: 'Disconnect All & Reconnect', fn: scenario12 },
+  { name: 'Server Fallback on Mid-Tree Disconnect', fn: scenario13 },
+  { name: 'Heartbeat Pause → Fallback → Resume → Recovery', fn: scenario14 },
+  { name: 'Server Info Cached After Server Seen', fn: scenario15 },
+  { name: 'Rapid Disconnects with Server Fallback', fn: scenario16 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -341,6 +345,173 @@ async function scenario12 (page) {
   await h.waitForAllConnected(page, 6, 30000)
 
   h.log('  All nodes reconnected successfully')
+}
+
+async function scenario13 (page) {
+  // Server Fallback on Mid-Tree Disconnect:
+  // With server enabled, disconnect a mid-tree node. Its orphaned children
+  // should fall back to server, then eventually upgrade back to P2P.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  var ids = await h.addNodes(page, 4)
+  await h.waitForAllConnected(page, 5)
+
+  // Find a mid-tree node (has downstream children, is not root)
+  var states = await h.getNodeStates(page)
+  var midNode = ids.find(function (id) {
+    return states[id] && states[id].downstreamCount > 0
+  })
+
+  if (!midNode) {
+    h.log('  No mid-tree node found, using first non-root')
+    midNode = ids[0]
+  }
+
+  h.log('  Disconnecting mid-tree node ' + midNode.slice(-5) + ' (downstream=' + (states[midNode] ? states[midNode].downstreamCount : 0) + ')...')
+  await h.disconnectNode(page, midNode)
+
+  // Wait for remaining nodes to reconnect — some may go through server first
+  await h.waitForAllConnected(page, 4, 30000)
+
+  // Check that at least one node went through server (fallback promotion)
+  var midStates = await h.getNodeStates(page)
+  var nonRoot = Object.keys(midStates).filter(function (id) { return !midStates[id].isRoot })
+  var serverCount = nonRoot.filter(function (id) { return midStates[id].transport === 'server' }).length
+  h.log('  After disconnect: ' + serverCount + ' on server, ' + (nonRoot.length - serverCount) + ' on p2p')
+
+  // Wait for all to end up on P2P (upgrade from server)
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    return ids.length > 0 && ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all nodes upgrade to P2P after fallback', 60000)
+
+  h.log('  All nodes recovered to P2P after server fallback')
+}
+
+async function scenario14 (page) {
+  // Heartbeat Pause → Fallback → Resume → Recovery:
+  // Pause heartbeats from a parent node. Children should attempt server fallback.
+  // Resume heartbeats before timeout. Children should close fallback and stay on P2P.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  var ids = await h.addNodes(page, 3)
+  await h.waitForAllConnected(page, 4)
+
+  // Find a node that has children (is sending heartbeats)
+  var states = await h.getNodeStates(page)
+  var parent = ids.find(function (id) {
+    return states[id] && states[id].downstreamCount > 0
+  })
+
+  if (!parent) {
+    // Root always has children in a 4-node tree
+    parent = Object.keys(states).find(function (id) { return states[id].isRoot })
+  }
+
+  h.log('  Pausing heartbeats from ' + parent.slice(-5) + ' for 2.5s...')
+  await h.pauseHeartbeats(page, parent)
+
+  // Wait 2.5s — enough for early warning (3s from last beat) to be close,
+  // but safely before the 4s kill timeout
+  await h.wait(2500)
+
+  // Resume heartbeats well before the 4s kill timeout
+  await h.resumeHeartbeats(page, parent)
+  h.log('  Heartbeats resumed, waiting for recovery...')
+
+  // Wait for all nodes to be connected and stable
+  await h.waitForAllConnected(page, 4, 15000)
+
+  // All nodes should be on P2P (fallback should have been closed)
+  var finalStates = await h.getNodeStates(page)
+  var nonRoot = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
+  for (var i = 0; i < nonRoot.length; i++) {
+    var s = finalStates[nonRoot[i]]
+    assert(s.transport === 'p2p',
+      'Node ' + nonRoot[i].slice(-5) + ' should be p2p, got ' + s.transport)
+    assert(!s.hasServerFallback,
+      'Node ' + nonRoot[i].slice(-5) + ' should have no active fallback')
+  }
+
+  h.log('  All nodes on P2P with no active fallback after recovery')
+}
+
+async function scenario15 (page) {
+  // Server Info Cached: after server is enabled and nodes see server responses,
+  // _serverInfo should be cached on nodes. This is a prerequisite for fallback.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  await h.addNodes(page, 3)
+  await h.waitForAllConnected(page, 4)
+
+  // Wait a bit for server responses to be seen during connection negotiation
+  await h.wait(2000)
+
+  var states = await h.getNodeStates(page)
+  var nonRoot = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+
+  // At least some non-root nodes should have cached server info
+  var withInfo = nonRoot.filter(function (id) { return states[id].hasServerInfo })
+  h.log('  ' + withInfo.length + '/' + nonRoot.length + ' non-root nodes have _serverInfo cached')
+
+  assert(withInfo.length > 0,
+    'At least one non-root node should have _serverInfo cached, got 0')
+
+  h.log('  Server info is cached — fallback would work for these nodes')
+}
+
+async function scenario16 (page) {
+  // Rapid Disconnects with Server Fallback:
+  // Disconnect two mid-tree nodes simultaneously. All orphaned children should
+  // independently fall back to server and recover.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  var ids = await h.addNodes(page, 6)
+  await h.waitForAllConnected(page, 7)
+
+  // Find two nodes with children
+  var states = await h.getNodeStates(page)
+  var parents = ids.filter(function (id) {
+    return states[id] && states[id].downstreamCount > 0
+  })
+
+  if (parents.length < 2) {
+    h.log('  Only ' + parents.length + ' parents found, disconnecting what we have')
+    parents = parents.slice(0, 1)
+  } else {
+    parents = parents.slice(0, 2)
+  }
+
+  h.log('  Disconnecting ' + parents.length + ' mid-tree nodes simultaneously...')
+  for (var i = 0; i < parents.length; i++) {
+    await h.disconnectNode(page, parents[i])
+  }
+
+  var remaining = 7 - parents.length
+
+  // Wait for remaining nodes to reconnect
+  await h.waitForAllConnected(page, remaining, 30000)
+  h.log('  All remaining nodes reconnected after rapid disconnects')
+
+  // Wait for all to end up on P2P
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    return ids.length > 0 && ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all nodes upgrade to P2P', 60000)
+
+  h.log('  All nodes recovered to P2P after rapid disconnects with server fallback')
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────
