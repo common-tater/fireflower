@@ -29,7 +29,11 @@ var scenarios = [
   { name: 'Server Fallback on Mid-Tree Disconnect', fn: scenario13 },
   { name: 'Heartbeat Pause → Fallback → Resume → Recovery', fn: scenario14 },
   { name: 'Server Info Cached After Server Seen', fn: scenario15 },
-  { name: 'Rapid Disconnects with Server Fallback', fn: scenario16 }
+  { name: 'Rapid Disconnects with Server Fallback', fn: scenario16 },
+  { name: 'Server-First Connection + P2P Upgrade', fn: scenario17 },
+  { name: 'Force Server Downgrade (P2P → Server)', fn: scenario18 },
+  { name: 'Force Server ON then OFF (roundtrip)', fn: scenario19 },
+  { name: 'Simultaneous Server→P2P Upgrades (no stuck nodes)', fn: scenario20 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -512,6 +516,164 @@ async function scenario16 (page) {
   }, 'all nodes upgrade to P2P', 60000)
 
   h.log('  All nodes recovered to P2P after rapid disconnects with server fallback')
+}
+
+async function scenario17 (page) {
+  // Server-First Connection + P2P Upgrade:
+  // With server enabled, new nodes should connect via server first (for instant data),
+  // then upgrade to P2P in the background.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  await h.addNodes(page, 3)
+
+  // Nodes should connect quickly (via server-first)
+  await h.waitForAllConnected(page, 4)
+
+  // Check initial state — at least some should be on server (server-first)
+  var initialStates = await h.getNodeStates(page)
+  var nonRoot = Object.keys(initialStates).filter(function (id) { return !initialStates[id].isRoot })
+  var serverCount = nonRoot.filter(function (id) { return initialStates[id].transport === 'server' }).length
+  h.log('  Initial: ' + serverCount + '/' + nonRoot.length + ' on server (server-first)')
+
+  // Wait for P2P upgrade — nodes should switch from server to P2P
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length === 0) return false
+    var p2pCount = ids.filter(function (id) { return states[id].transport === 'p2p' }).length
+    return p2pCount === ids.length
+  }, 'all nodes upgrade to P2P after server-first', 60000)
+
+  h.log('  All nodes upgraded from server-first to P2P')
+}
+
+async function scenario18 (page) {
+  // Force Server Downgrade: with a stable P2P tree, toggle Force Server ON.
+  // All non-root P2P nodes should switch to server transport.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Add nodes and wait for them to be on P2P (may go through server-first then upgrade)
+  await h.addNodes(page, 3)
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length < 3) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all nodes on P2P', 60000)
+
+  h.log('  All nodes on P2P, now toggling Force Server ON...')
+  await h.setForceServer(page, true)
+
+  // All non-root should switch to server
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length === 0) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'server'
+    })
+  }, 'all nodes switch to server after force-server', 30000)
+
+  h.log('  All non-root nodes downgraded from P2P to server')
+  await h.setForceServer(page, false)
+}
+
+async function scenario19 (page) {
+  // Force Server ON then OFF: full roundtrip.
+  // P2P → force server ON → server → force server OFF → P2P upgrade
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  await h.addNodes(page, 3)
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length < 3) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all nodes on P2P', 60000)
+
+  h.log('  All nodes on P2P, toggling Force Server ON...')
+  await h.setForceServer(page, true)
+
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length === 0) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'server'
+    })
+  }, 'all nodes on server', 30000)
+
+  h.log('  All on server, toggling Force Server OFF...')
+  await h.setForceServer(page, false)
+
+  // Nodes should upgrade back to P2P
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length === 0) return false
+    var p2pCount = ids.filter(function (id) { return states[id].transport === 'p2p' }).length
+    return p2pCount > 0
+  }, 'at least one node upgrades back to P2P', 45000)
+
+  h.log('  Nodes upgrading back to P2P after force-server roundtrip')
+}
+
+async function scenario20 (page) {
+  // Simultaneous Server→P2P Upgrades: many nodes connect via server, then all
+  // try to upgrade to P2P around the same time. This tests for circle formation
+  // and stuck nodes during the thundering herd of upgrade requests.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Use a short upgrade interval to trigger upgrades quickly
+  await page.evaluate(function () {
+    window._origUpgradeInterval = 30000
+  })
+
+  // Add many nodes quickly — they all connect via server-first
+  await h.addNodes(page, 8, { p2pUpgradeInterval: 8000 })
+
+  // Wait for all to be connected (via server-first)
+  await h.waitForAllConnected(page, 9, 30000) // root + 8
+  h.log('  All 8 nodes connected (server-first)')
+
+  // Verify most are on server initially
+  var initialStates = await h.getNodeStates(page)
+  var nonRoot = Object.keys(initialStates).filter(function (id) { return !initialStates[id].isRoot })
+  var serverCount = nonRoot.filter(function (id) { return initialStates[id].transport === 'server' }).length
+  h.log('  Initial: ' + serverCount + '/' + nonRoot.length + ' on server')
+
+  // Wait for ALL nodes to upgrade to P2P — this is where circles/stuck nodes would happen
+  // The 8s upgrade interval means all nodes try to upgrade around the same time
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length < 8) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all 8 nodes upgrade to P2P without getting stuck', 60000)
+
+  h.log('  All 8 nodes successfully upgraded from server to P2P (no stuck nodes)')
+
+  // Verify no circles: every non-root should have a different upstream
+  var finalStates = await h.getNodeStates(page)
+  var upstreams = {}
+  nonRoot = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
+  for (var i = 0; i < nonRoot.length; i++) {
+    var s = finalStates[nonRoot[i]]
+    if (s.upstream) {
+      if (upstreams[s.upstream] && upstreams[s.upstream] === nonRoot[i]) {
+        throw new Error('Circle detected: ' + nonRoot[i].slice(-5) + ' <-> ' + s.upstream.slice(-5))
+      }
+      upstreams[nonRoot[i]] = s.upstream
+    }
+  }
+  h.log('  No circles detected in final tree')
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────

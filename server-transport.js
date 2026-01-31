@@ -38,8 +38,6 @@ function ServerTransport (opts) {
 ServerTransport.prototype._connect = function () {
   var self = this
 
-  console.log('ServerTransport: connecting to', this.url)
-
   try {
     // Use browser WebSocket or Node.js ws
     var WS = typeof WebSocket !== 'undefined' ? WebSocket : require('ws')
@@ -58,7 +56,6 @@ ServerTransport.prototype._connect = function () {
   }, 10000)
 
   this._ws.onopen = function () {
-    console.log('ServerTransport: WebSocket opened')
     clearTimeout(self._connectTimeout)
     self._connectTimeout = null
 
@@ -76,7 +73,7 @@ ServerTransport.prototype._connect = function () {
     try {
       data = JSON.parse(typeof evt.data === 'string' ? evt.data : evt.data.toString())
     } catch (err) {
-      console.warn('ServerTransport: failed to parse message', err)
+      // failed to parse, ignore
       return
     }
 
@@ -84,12 +81,10 @@ ServerTransport.prototype._connect = function () {
   }
 
   this._ws.onerror = function (err) {
-    console.log('ServerTransport: WebSocket error', err.message || err)
     self._handleError(err)
   }
 
   this._ws.onclose = function () {
-    console.log('ServerTransport: WebSocket closed')
     self._destroy()
   }
 }
@@ -101,7 +96,6 @@ ServerTransport.prototype._handleMessage = function (data) {
       this.id = data.id || '__relay__'
       this.didConnect = true
       this.emit('connect')
-      console.log('ServerTransport: connected to server', this.id)
       break
 
     case 'channel-open':
@@ -114,7 +108,6 @@ ServerTransport.prototype._handleMessage = function (data) {
       if (channel.onopen) {
         channel.onopen()
       }
-      console.log('ServerTransport: server opened channel', data.label)
       break
 
     case 'channel':
@@ -131,7 +124,7 @@ ServerTransport.prototype._handleMessage = function (data) {
       break
 
     default:
-      console.warn('ServerTransport: unknown message type', data.type)
+      // unknown message type, ignore
   }
 }
 
@@ -175,7 +168,6 @@ ServerTransport.prototype.createDataChannel = function (label, opts) {
     }
   }, 0)
 
-  console.log('ServerTransport: created channel', label)
   return channel
 }
 
@@ -221,6 +213,5 @@ ServerTransport.prototype._destroy = function () {
   this._channels = {}
 
   this.emit('close')
-  console.log('ServerTransport: destroyed')
 }
 

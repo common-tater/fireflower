@@ -1,4 +1,3 @@
-window.localStorage.debug = 'fireflower'
 require('./debug-console')()
 
 // Initialize Firebase first - before any other modules that might need it

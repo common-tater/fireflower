@@ -91,6 +91,25 @@ node.on('connect', function () {
   console.log('Node connected to tree as child (level 1)')
   console.log('Upstream:', node.upstream ? node.upstream.id : 'none')
   console.log('Transport:', node.transport)
+
+  // Publish serverUrl to config so all nodes can discover the server
+  var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
+  set(serverUrlConfigRef, serverUrl)
+  // Auto-remove serverUrl if Firebase connection drops (process kill, crash, etc.)
+  onDisconnect(serverUrlConfigRef).remove()
+
+  // Auto-remove server report on Firebase disconnect
+  var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
+  onDisconnect(reportRef).remove()
+})
+
+node.on('disconnect', function () {
+  // Remove serverUrl from config when server disconnects
+  var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
+  remove(serverUrlConfigRef)
+  // Remove server report
+  var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
+  remove(reportRef)
 })
 
 wss.on('connection', function (ws) {
@@ -137,7 +156,7 @@ wss.on('error', function (err) {
 })
 
 // Watch serverEnabled config toggle from visualizer
-var { ref, onValue } = require('firebase/database')
+var { ref, onValue, set, remove, onDisconnect } = require('firebase/database')
 var configRef = ref(firebase.db, firebasePath + '/configuration/serverEnabled')
 var serverActive = false
 

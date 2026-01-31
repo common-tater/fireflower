@@ -57,20 +57,22 @@ GraphView.prototype.render = function () {
     }
     this.serverNode.render()
 
-    // Draw connection line from server to root
-    var scale = isRetina ? 2 : 1
-    this.context.beginPath()
-    this.context.moveTo(root.x * scale, root.y * scale)
-    this.context.lineTo(this.serverNode.x * scale, this.serverNode.y * scale)
-    this.context.lineWidth = 2 * window.devicePixelRatio
-    this.context.lineCap = 'round'
-    this.context.strokeStyle = 'rgba(68, 221, 68, 0.7)'
-    this.context.stroke()
+    // Draw connection line from server to root (only when online)
+    if (!this.serverNode.offline) {
+      var scale = isRetina ? 2 : 1
+      this.context.beginPath()
+      this.context.moveTo(root.x * scale, root.y * scale)
+      this.context.lineTo(this.serverNode.x * scale, this.serverNode.y * scale)
+      this.context.lineWidth = 2 * window.devicePixelRatio
+      this.context.lineCap = 'round'
+      this.context.strokeStyle = 'rgba(68, 221, 68, 0.7)'
+      this.context.stroke()
+    }
   }
 
   for (var i in this.nodes) {
     var node = this.nodes[i]
-    node.model.K = this.K
+    if (this.K != null) node.model.K = this.K
 
     if (!node.el.parentNode) {
       this.nodesEl.appendChild(node.el)
@@ -84,61 +86,108 @@ GraphView.prototype._watchServerNode = function (path) {
   var self = this
   var db = firebaseInit.getDb()
   var reportsRef = ref(db, path + '/reports')
+  var serverEnabledRef = ref(db, path + '/configuration/serverEnabled')
+  var serverUrlRef = ref(db, path + '/configuration/serverUrl')
+
+  // Track config state — start false until Firebase responds
+  this._serverEnabled = false
+  this._serverUrl = null  // set by relay server on connect, removed on disconnect
+  this._serverReports = null
+
+  onValue(serverEnabledRef, function (snapshot) {
+    var enabled = snapshot.val()
+    self._serverEnabled = enabled !== false
+    self._updateServerNode()
+  })
+
+  // serverUrl is the reliable online signal — relay server writes it on
+  // connect, removes it on disconnect, and uses onDisconnect() for crash cleanup
+  onValue(serverUrlRef, function (snapshot) {
+    self._serverUrl = snapshot.val() || null
+    self._updateServerNode()
+  })
 
   onValue(reportsRef, function (snapshot) {
-    var reports = snapshot.val()
-    if (!reports) {
-      self._removeServerNode()
-      return
-    }
+    self._serverReports = snapshot.val()
+    self._updateServerNode()
+  })
+}
 
-    var now = Date.now()
-    var bestServer = null
+GraphView.prototype._updateServerNode = function () {
+  var reports = this._serverReports
+  var serverEnabled = this._serverEnabled
+  var serverOnline = !!this._serverUrl  // serverUrl present = relay server is alive
+
+  // Find server report for status display (level, health, etc.)
+  var bestServer = null
+  if (reports && serverOnline) {
     var bestTimestamp = 0
-
     for (var id in reports) {
       var report = reports[id]
-      if (report.isServer && report.timestamp && (now - report.timestamp) < 10000) {
+      if (report.isServer && report.timestamp) {
         if (report.timestamp > bestTimestamp) {
           bestTimestamp = report.timestamp
           bestServer = { id: id, report: report }
         }
       }
     }
+  }
 
-    if (bestServer) {
-      var sid = bestServer.id
-      var sreport = bestServer.report
-      if (!self.serverNode || self.serverNode.serverId !== sid) {
-        self._removeServerNode()
-        var el = document.createElement('div')
-        el.className = 'node server-node'
-        el.innerHTML = '<div id="circle"></div><div id="label">SERVER</div><div id="status"></div>'
-        self.serverNode = {
-          el: el,
-          serverId: sid,
-          x: 120,
-          y: 0,
-          report: sreport,
-          render: function () {
-            this.el.style.left = this.x + 'px'
-            this.el.style.top = this.y + 'px'
-          }
-        }
-      }
-      self.serverNode.report = sreport
-      var statusEl = self.serverNode.el.querySelector('#status')
-      var level = sreport.level != null ? sreport.level : '?'
-      var transport = sreport.transport || '?'
-      var health = sreport.health
-      var scoreText = health ? ' \u2764 ' + health.score : ''
-      statusEl.textContent = 'L' + level + ' ' + transport + scoreText
-    } else {
-      self._removeServerNode()
+  if (serverOnline && bestServer) {
+    // Server is online with report data
+    var sid = bestServer.id
+    var sreport = bestServer.report
+    if (!this.serverNode || this.serverNode.serverId !== sid || this.serverNode.offline) {
+      this._removeServerNode()
+      this._createServerNodeEl(sid, false)
     }
+    this.serverNode.report = sreport
+    var statusEl = this.serverNode.el.querySelector('#status')
+    var level = sreport.level != null ? sreport.level : '?'
+    var transport = sreport.transport || '?'
+    var health = sreport.health
+    var scoreText = health ? ' \u2764 ' + health.score : ''
+    statusEl.textContent = 'L' + level + ' ' + transport + scoreText
+  } else if (serverOnline) {
+    // Server URL present but no report yet — show green, connecting
+    if (!this.serverNode || this.serverNode.offline) {
+      this._removeServerNode()
+      this._createServerNodeEl(null, false)
+    }
+    var connectingStatus = this.serverNode.el.querySelector('#status')
+    connectingStatus.textContent = 'connecting...'
+  } else if (serverEnabled) {
+    // Server enabled but offline — show red indicator
+    if (!this.serverNode || !this.serverNode.offline) {
+      this._removeServerNode()
+      this._createServerNodeEl(null, true)
+    }
+    var offlineStatus = this.serverNode.el.querySelector('#status')
+    offlineStatus.textContent = 'OFFLINE'
+  } else {
+    // Server disabled — hide it
+    this._removeServerNode()
+  }
 
-    self.render()
-  })
+  if (this.width) this.render()
+}
+
+GraphView.prototype._createServerNodeEl = function (serverId, offline) {
+  var el = document.createElement('div')
+  el.className = 'node server-node' + (offline ? ' server-offline' : '')
+  el.innerHTML = '<div id="circle"></div><div id="label">SERVER</div><div id="status"></div>'
+  this.serverNode = {
+    el: el,
+    serverId: serverId,
+    offline: offline,
+    x: 120,
+    y: 0,
+    report: null,
+    render: function () {
+      this.el.style.left = this.x + 'px'
+      this.el.style.top = this.y + 'px'
+    }
+  }
 }
 
 GraphView.prototype._removeServerNode = function () {

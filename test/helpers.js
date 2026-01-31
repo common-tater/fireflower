@@ -59,7 +59,8 @@ async function getNodeStates (page) {
         downstreamCount: Object.keys(root.model.downstream || {}).length,
         isRoot: true,
         hasServerFallback: !!root.model._serverFallback,
-        hasServerInfo: !!root.model._serverInfo
+        hasServerInfo: !!root.model._serverInfo,
+        debugLog: (root.model._debugLog || []).slice(-10)
       }
     }
 
@@ -76,7 +77,8 @@ async function getNodeStates (page) {
         downstreamCount: Object.keys(node.model.downstream || {}).length,
         isRoot: false,
         hasServerFallback: !!node.model._serverFallback,
-        hasServerInfo: !!node.model._serverInfo
+        hasServerInfo: !!node.model._serverInfo,
+        debugLog: (node.model._debugLog || []).slice(-10)
       }
     }
     return result
@@ -141,12 +143,18 @@ async function waitForAll (page, predicate, message, timeout) {
     await wait(POLL_INTERVAL)
   }
 
-  // Timeout — build error message
+  // Timeout — build error message with debug logs
   var detail = ''
   if (lastStates) {
     for (var id in lastStates) {
       var s = lastStates[id]
       detail += '\n    ' + id.slice(-5) + ': state=' + s.state + ' transport=' + s.transport + ' upstream=' + (s.upstream ? s.upstream.slice(-5) : 'none')
+      if (s.state !== 'connected' && s.debugLog && s.debugLog.length) {
+        detail += '\n      last events:'
+        for (var i = 0; i < s.debugLog.length; i++) {
+          detail += '\n        ' + s.debugLog[i]
+        }
+      }
     }
   }
   throw new Error('Timeout: ' + (message || 'waitForAll') + detail)
@@ -235,6 +243,7 @@ async function clearFirebase () {
   // Set serverEnabled=false so relay server doesn't interfere during page load
   await set(ref(db, TEST_PATH + '/configuration/serverEnabled'), false)
   await set(ref(db, TEST_PATH + '/configuration/serverOnly'), false)
+  await remove(ref(db, TEST_PATH + '/configuration/serverUrl'))
 }
 
 async function clearFirebaseRequests () {

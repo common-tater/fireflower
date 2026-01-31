@@ -140,6 +140,19 @@ body {
   margin-top: 2px;
 }
 
+#graph #nodes .node.server-node.server-offline #circle {
+  background-color: rgba(220, 50, 50, 0.4);
+  border-color: rgba(180, 30, 30, 0.8);
+}
+
+#graph #nodes .node.server-node.server-offline #label {
+  color: #CC4444;
+}
+
+#graph #nodes .node.server-node.server-offline #status {
+  color: #CC6666;
+}
+
 #controls {
   position: fixed;
   top: 20px;
