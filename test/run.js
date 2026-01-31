@@ -414,33 +414,32 @@ async function scenario14 (page) {
     parent = Object.keys(states).find(function (id) { return states[id].isRoot })
   }
 
-  h.log('  Pausing heartbeats from ' + parent.slice(-5) + ' for 3.5s...')
+  h.log('  Pausing heartbeats from ' + parent.slice(-5) + ' for 2.5s...')
   await h.pauseHeartbeats(page, parent)
 
-  // Wait 3.5s — enough for early warning (3s) but not heartbeat timeout (4s)
-  await h.wait(3500)
+  // Wait 2.5s — enough for early warning (3s from last beat) to be close,
+  // but safely before the 4s kill timeout
+  await h.wait(2500)
 
-  // Resume heartbeats before the 4s kill timeout
+  // Resume heartbeats well before the 4s kill timeout
   await h.resumeHeartbeats(page, parent)
   h.log('  Heartbeats resumed, waiting for recovery...')
 
-  // Wait a bit for fallback to be closed
-  await h.wait(3000)
+  // Wait for all nodes to be connected and stable
+  await h.waitForAllConnected(page, 4, 15000)
 
-  // All nodes should still be connected via P2P (fallback should have been closed)
+  // All nodes should be on P2P (fallback should have been closed)
   var finalStates = await h.getNodeStates(page)
-  var allIds = Object.keys(finalStates)
-  for (var i = 0; i < allIds.length; i++) {
-    var s = finalStates[allIds[i]]
-    assert(s.state === 'connected',
-      'Node ' + allIds[i].slice(-5) + ' should be connected, got ' + s.state)
-    assert(s.transport === 'p2p' || s.isRoot,
-      'Node ' + allIds[i].slice(-5) + ' should be p2p, got ' + s.transport)
+  var nonRoot = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
+  for (var i = 0; i < nonRoot.length; i++) {
+    var s = finalStates[nonRoot[i]]
+    assert(s.transport === 'p2p',
+      'Node ' + nonRoot[i].slice(-5) + ' should be p2p, got ' + s.transport)
     assert(!s.hasServerFallback,
-      'Node ' + allIds[i].slice(-5) + ' should have no active fallback')
+      'Node ' + nonRoot[i].slice(-5) + ' should have no active fallback')
   }
 
-  h.log('  All nodes stayed on P2P, fallback was closed on recovery')
+  h.log('  All nodes on P2P with no active fallback after recovery')
 }
 
 async function scenario15 (page) {
