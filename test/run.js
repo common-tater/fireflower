@@ -35,7 +35,8 @@ var scenarios = [
   { name: 'Force Server ON then OFF (roundtrip)', fn: scenario19 },
   { name: 'Simultaneous Server→P2P Upgrades (no stuck nodes)', fn: scenario20 },
   { name: 'Transitive Circle Prevention During Upgrades', fn: scenario21 },
-  { name: 'Minimal Server→P2P Switch (1 peer)', fn: scenario22 }
+  { name: 'Minimal Server→P2P Switch (1 peer)', fn: scenario22 },
+  { name: 'Server-First Prefers Server Over P2P Root', fn: scenario23 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -790,6 +791,53 @@ async function scenario22 (page) {
   h.log('  Peer stayed connected to root via P2P for 3s — stable')
 }
 
+async function scenario23 (page) {
+  // Server-first must prefer server candidate over P2P root response.
+  // Previously, _reviewResponses accepted P2P root before checking for
+  // server candidates, so serverFirst=true had no effect when root responded.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Add a single node with serverFirst (default) and a short upgrade interval
+  var ids = await h.addNodes(page, 1, { p2pUpgradeInterval: 5000 })
+  await h.waitForAllConnected(page, 2) // root + 1 peer
+
+  // The peer should have connected via server transport FIRST (not P2P to root)
+  var states = await h.getNodeStates(page)
+  var peerId = ids[0]
+  var peer = states[peerId]
+  h.log('  Peer transport: ' + peer.transport + ', upstream: ' + (peer.upstream || 'none').slice(-5))
+
+  // The peer's upstream should be the relay server, not root
+  var rootId = Object.keys(states).find(function (id) { return states[id].isRoot })
+  assert(peer.transport === 'server',
+    'Peer should initially connect via server (server-first), got ' + peer.transport)
+  assert(peer.upstream !== rootId,
+    'Peer upstream should be relay server, not root directly')
+
+  h.log('  Peer correctly connected via server-first (not P2P root)')
+
+  // Now wait for the P2P upgrade to happen
+  await h.waitForAll(page, function (states) {
+    var s = states[peerId]
+    if (!s) return false
+    return s.state === 'connected' && s.transport === 'p2p'
+  }, 'peer upgrades from server to P2P', 20000)
+
+  h.log('  Peer upgraded to P2P')
+
+  // Verify stable
+  await h.wait(2000)
+  var finalStates = await h.getNodeStates(page)
+  assert(finalStates[peerId].state === 'connected',
+    'Peer should still be connected after upgrade')
+  assert(finalStates[peerId].transport === 'p2p',
+    'Peer should be on P2P after upgrade')
+
+  h.log('  Server-first -> P2P upgrade completed and stable')
+}
+
 // ─── Infrastructure ─────────────────────────────────────────────────
 
 function startExampleServer () {
@@ -889,7 +937,11 @@ async function main () {
   var browser = await puppeteer.launch({
     headless: false,
     defaultViewport: null,
-    args: ['--window-size=1200,800']
+    args: [
+      '--window-size=1200,800',
+      '--disable-features=WebRtcHideLocalIpsWithMdns',
+      '--allow-loopback-in-peer-connection'
+    ]
   })
 
   var page = (await browser.pages())[0]

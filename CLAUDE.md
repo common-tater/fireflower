@@ -10,7 +10,7 @@ P2P broadcasting system using WebRTC data channels in a K-ary tree topology, wit
 - **relay-server.js** — Node.js WebSocket relay server that joins the tree as a regular node (level 1 child of root).
 - **example/** — Browser demo app with 2D visualization. Shows server node status (green=online, red=offline).
 - **example/src/graph.js** — 2D graph view. Watches Firebase reports for server node presence and `serverEnabled` config. Shows red "OFFLINE" indicator when server is enabled but not reporting.
-- **visualizer/** — 3D Three.js visualization of the tree, reads reports from Firebase.
+- **[fireflower-visualizer](https://github.com/common-tater/fireflower-visualizer)** — Separate repo. 3D Three.js visualization of the tree, reads reports from Firebase. Clone alongside this repo and run on port 8081.
 
 ## Key Patterns
 
@@ -82,8 +82,8 @@ When the server is disabled (`serverEnabled: false`), `serverOnly` becomes meani
 ### Relay server auto-reconnect after reset
 When the Reset button clears Firebase data and the root page refreshes, the relay server's upstream WebRTC connection becomes stale. The server should detect the ICE disconnect and reconnect to the new root. If the relay server gets stuck, restart it manually. The server's `onValue` config watcher keeps it responsive to enable/disable toggles.
 
-### Upgrade requests must be cleaned up from Firebase
-`_attemptUpgrade` publishes a secondary Firebase request to find P2P peers. When a response is accepted, the timeout handler (which normally cleans up the request) is cancelled. If the request is not explicitly removed after acceptance, it stays in Firebase permanently. Other nodes see it via `onChildAdded` replay and respond to a stale request, wasting resources and potentially creating unwanted connections. Fix: call `firebase.remove(upgradeRequestRef)` immediately after accepting a response in `_attemptUpgrade`.
+### Upgrade requests must be cleaned up from Firebase (but not too early)
+`_attemptUpgrade` publishes a secondary Firebase request to find P2P peers. When a response is accepted, the timeout handler (which normally cleans up the request) is cancelled. If the request is not explicitly removed after acceptance, it stays in Firebase permanently. Other nodes see it via `onChildAdded` replay and respond to a stale request, wasting resources and potentially creating unwanted connections. However, `firebase.remove(upgradeRequestRef)` must NOT be called immediately — the remove cascades to the entire subtree including the response's `requesterSignals`/`responderSignals` paths that both sides need for ICE negotiation. Removing too early kills the signal exchange and the connection fails. Fix: defer `firebase.remove(upgradeRequestRef)` until the peer emits `connect` (success) or `close` (failure). Use `_connectToPeer`'s return value (the peer object) to attach these listeners.
 
 ### Circle prevention: ancestor chain for transitive circle detection
 The original mask-based circle check (`peerId === this._mask`) only carried a single ancestor ID and root never initialized `_mask`, so it stayed `undefined` for the entire tree. The direct parent check (`this.upstream.id === peerId`) only catches 2-node circles (A ↔ B). With simultaneous P2P upgrades from server, N-node circles can form: A → B → C → D → A. This happens when multiple server-connected nodes upgrade at the same time — they respond to each other's requests and form a web of connections where the mask hasn't propagated yet.
@@ -91,6 +91,9 @@ The original mask-based circle check (`peerId === this._mask`) only carried a si
 Fix: propagate a **full ancestor list** through mask updates instead of just a single ID. Each node's `_ancestors` array contains the IDs of every node between it and root. In `_ondownstreamConnect`, the parent sends `{ mask, level, ancestors: [...this._ancestors, this.id] }`. In `_onrequest`, the check `this._ancestors.indexOf(peerId) !== -1` catches any transitive ancestor trying to become a child, regardless of how many hops away. Root initializes `_mask = this.id`, `_level = 0`, `_ancestors = []` in `_doconnect`. When a subtree disconnects, `_onupstreamDisconnect` sets `ancestors: [this.id]` so descendants know their disconnected subtree root.
 
 The direct parent check (`this.upstream.id === peerId`) is kept as a fast path alongside the ancestor check.
+
+### Server-first must be checked before P2P root acceptance in _reviewResponses
+In `_reviewResponses`, root's response has no `upstream` field, so it goes into `p2pRoots`. The original code accepted `p2pRoots` immediately (line ~590) BEFORE the server-first check (line ~632). This meant server-first was dead code whenever root responded — root always won. Fix: split candidates into P2P and server lists BEFORE the P2P root acceptance block. Check `this.serverFirst && serverCandidates.length` first, and only fall through to P2P root acceptance if server-first doesn't apply.
 
 ### Server-first connection design
 The `serverFirst` option (default: true) causes `_reviewResponses` to prefer server candidates over P2P when both are available. This gives nodes instant data through the relay server while P2P negotiation happens in the background via the upgrade timer. When no server is running, `serverCandidates.length` is 0 and the code falls through to the normal P2P path — P2P-only mode is completely unaffected. The `isServer` node always has `serverFirst: false` (it IS the server). Root also ignores it (root has no upstream).
@@ -140,9 +143,6 @@ When running tests with `?path=test-tree`, any other browser tab (e.g., user's B
 ### Console.log strategy for index.js
 Strategic console.logs remain in index.js for key topology and diagnostic events: upstream/downstream connected/disconnected, `_dorequest` with full state, `_reviewResponses` with candidate counts, `_reviewRequests` decisions (SUBSCRIBING/SKIP/FULL), `_attemptUpgrade`, and request SKIP reasons. All other diagnostic info goes to the `_debugLog` ring buffer (via `this._log()`). This keeps console output focused on connection topology while preserving full diagnostic data for post-mortem analysis via `waitForAll` timeout dumps. When debugging a specific issue, add temporary console.logs but remove them before committing.
 
-### `_reviewRequests` must use connected count not total count
-`_reviewRequests` re-subscribes to Firebase requests when a node has capacity. It must count only `didConnect` peers (completed ICE), not total `downstream` entries (which include pending peers stuck in ICE negotiation). Pending peers from stale requests can accumulate and block the node from accepting new connections. The stop check in `_ondownstreamConnect` already uses connected count — `_reviewRequests` must match.
-
 ### Zombie pending peers from serverOnly nodes block capacity
 When `serverOnly` is true, nodes only accept server responses. But their Firebase requests are visible to all responders, including root and P2P nodes. Root responds to these requests, creating pending downstream peers. The `serverOnly` node ignores root's P2P response (it only wants server), but root's pending entry persists for `connectionTimeout` (5s). Previously, a `pendingCount >= K` cap in `_onrequest` blocked root from responding to ANY new requests while these zombie pending peers existed. Fix: remove the pending count cap entirely — the connected count cap (`connected >= K`) is the real gate. Zombie pending peers expire harmlessly after 5s.
 
@@ -155,11 +155,31 @@ When the relay responds to a node's upgrade request, it creates a downstream ent
 ### serverOnly race condition: config change arrives after server disconnect
 When force-server is toggled OFF and the server is disabled, two things happen: (1) the relay server shuts down, closing WebSocket connections instantly, and (2) the Firebase config change propagates to all nodes. The WebSocket close is immediate but the Firebase config takes a network round-trip. A node connected via server detects the disconnect first and calls `_dorequest` with stale `serverOnly=true`. Root sees the request but skips it (`request.serverOnly && !this.isServer`). Seconds later the config change arrives, setting `this.serverOnly = false`, but `_onconfig` only handled this transition when `state === 'connected'` and `transport === 'server'` — not when in `requesting` state. Fix: add a branch in `_onconfig` that detects `wasServerOnly && !this.serverOnly && this.state === 'requesting'` and restarts the request with the corrected `serverOnly=false` flag. The old request (with `serverOnly=true`) is removed from Firebase and a new one is published that P2P nodes can respond to.
 
+## Dev Environment Setup
+
+### Firebase project
+Both fireflower and fireflower-visualizer use the same Firebase Realtime Database: **fireflower-test-viz** (`fireflower-test-viz-default-rtdb`). Firebase config files are gitignored — copy from `firebase-config.example.js` and use the `fireflower-test-viz` project credentials. Auth via `firebase login` (CLI) — no `.env` file needed.
+
+### Stale Firebase data
+After crashes, resets, or switching machines, stale data in Firebase (old reports, stuck requests, ghost `serverUrl`) can prevent nodes from connecting. Clear it before manual testing:
+```bash
+firebase database:remove /tree --project fireflower-test-viz --instance fireflower-test-viz-default-rtdb --force
+firebase database:set /tree/configuration --project fireflower-test-viz --instance fireflower-test-viz-default-rtdb --data '{"serverEnabled":true,"serverOnly":false}' --force
+```
+
+### Related repos
+- **fireflower** — this repo, the core library + example app + relay server + tests
+- **[fireflower-visualizer](https://github.com/common-tater/fireflower-visualizer)** — 3D visualizer, clone to `../fireflower-visualizer`. Independent app that reads the same Firebase database (no code dependency on fireflower). Needs `events` npm package installed for browser build.
+
+### GitHub
+Org: `common-tater`. PRs go to `common-tater/fireflower` and `common-tater/fireflower-visualizer`.
+
 ## Build
 
 ```bash
 npm run build          # builds example/build.js
-cd visualizer && npm run build  # builds visualizer/share/build.js
+# Visualizer is a separate repo (fireflower-visualizer), build it there:
+# cd ../fireflower-visualizer && npm run build
 ```
 
 ## Running
@@ -168,22 +188,24 @@ cd visualizer && npm run build  # builds visualizer/share/build.js
 # Terminal 1: Example app (port 8080)
 node example/server.js
 
-# Terminal 2: Visualizer (port 8081)
-cd visualizer && npm start
-
-# Terminal 3: Relay server (port 8082)
+# Terminal 2: Relay server (port 8082)
 node relay-server.js
+
+# Terminal 3: Visualizer (port 8081) — separate repo
+cd ../fireflower-visualizer && npm start
 ```
+
+Note: The `npm run dev` and `npm run dev:viz` scripts in package.json still reference a local `visualizer/` subdirectory that no longer exists. Use the individual commands above, or start the visualizer from its separate repo.
 
 ### Configurable Firebase path
 The example app reads `?path=<name>` from the URL query string, defaulting to `'tree'`. This enables multiple independent trees on the same Firebase database — each path gets its own requests, reports, configuration, and node space. The 3D visualizer also supports path via URL pathname (e.g., `http://localhost:8081/my-path`).
 
 ## Testing
 
-Automated test suite using Puppeteer that runs 22 scenarios with a visible browser:
+Automated test suite using Puppeteer that runs 23 scenarios with a visible browser:
 
 ```bash
-npm test           # Run all 22 scenarios
+npm test           # Run all 23 scenarios
 node test/run.js 3 # Run only scenario 3
 ```
 
@@ -199,7 +221,7 @@ Tests use the isolated Firebase path `test-tree` (not the default `tree`) so the
 Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to watch tests in 3D.
 
 ### Test files
-- `test/run.js` — Main test runner with all 21 scenarios
+- `test/run.js` — Main test runner with all 23 scenarios
 - `test/helpers.js` — Shared utilities (addNodes, waitForAllConnected, setK, etc.); `TEST_PATH` constant defines the isolated path
 
 ### Scenarios
@@ -225,3 +247,4 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 20. Simultaneous Server→P2P Upgrades — many nodes upgrade at once, no circles or stuck nodes
 21. Transitive Circle Prevention During Upgrades — verify ancestor chain prevents N-node circles
 22. Minimal Server→P2P Switch — 1 peer on forced server, server disabled, peer reconnects to root via P2P
+23. Server-First Prefers Server Over P2P Root — verifies server-first actually picks server candidate when root also responds

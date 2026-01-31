@@ -584,18 +584,8 @@ Node.prototype._reviewResponses = function () {
     candidates[response.id] = response
   }
 
-  console.log('[' + ts() + '] [fireflower] _reviewResponses', this.id.slice(-5), 'p2pRoots=' + p2pRoots.length, 'candidates=' + Object.keys(candidates).length, 'serverOnly=' + this.serverOnly, 'serverFirst=' + this.serverFirst)
-
-  // Accept P2P root (unless serverOnly mode)
-  if (!this.serverOnly && p2pRoots.length) {
-    firebase.off(this._responsesRef, 'child_added', this._onresponse)
-    debug(this.id + ' accepting P2P root response')
-    this._acceptResponse(p2pRoots[0])
-    delete this._responses
-    return
-  }
-
-  // Split non-root candidates into P2P and server
+  // Split non-root candidates into P2P and server early so server-first
+  // can check for server candidates before accepting the P2P root.
   var p2pCandidates = []
   var serverCandidates = []
 
@@ -627,13 +617,26 @@ Node.prototype._reviewResponses = function () {
   p2pCandidates.sort(healthSort)
   serverCandidates.sort(healthSort)
 
-  // Server-first: when enabled, accept server response immediately for instant data.
-  // The P2P upgrade timer will handle switching to P2P later.
+  console.log('[' + ts() + '] [fireflower] _reviewResponses', this.id.slice(-5), 'p2pRoots=' + p2pRoots.length, 'p2pCandidates=' + p2pCandidates.length, 'serverCandidates=' + serverCandidates.length, 'serverOnly=' + this.serverOnly, 'serverFirst=' + this.serverFirst)
+
+  // Server-first: when enabled and a server candidate exists, prefer it over
+  // P2P root for instant data. The P2P upgrade timer handles switching later.
+  // This must be checked BEFORE the P2P root acceptance — otherwise root's
+  // response (which has no upstream) always wins and server-first never fires.
   if (this.serverFirst && !this.serverOnly && serverCandidates.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
     this._log('accepting server-first response from ' + serverCandidates[0].id.slice(-5))
     debug(this.id + ' accepting server-first candidate response')
     this._acceptResponse(serverCandidates[0])
+    delete this._responses
+    return
+  }
+
+  // Accept P2P root (unless serverOnly mode)
+  if (!this.serverOnly && p2pRoots.length) {
+    firebase.off(this._responsesRef, 'child_added', this._onresponse)
+    debug(this.id + ' accepting P2P root response')
+    this._acceptResponse(p2pRoots[0])
     delete this._responses
     return
   }
@@ -781,6 +784,8 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       peer.close()
     }
   }, this.connectionTimeout)
+
+  return peer
 }
 
 Node.prototype._stopUpgradeTimer = function () {
@@ -866,7 +871,6 @@ Node.prototype._attemptUpgrade = function () {
     // Got a P2P response — accept it
     firebase.off(upgradeResponsesRef, 'child_added', onUpgradeResponse)
     self._clearTimeout(upgradeTimeout)
-    firebase.remove(upgradeRequestRef)
 
     debug(self.id + ' got P2P upgrade response from ' + response.id)
 
@@ -877,7 +881,23 @@ Node.prototype._attemptUpgrade = function () {
     self.state = 'connecting'
     self.emit('statechange')
 
-    self._connectToPeer(false, response.id, null, response.ref)
+    var upgradePeer = self._connectToPeer(false, response.id, null, response.ref)
+
+    // Do NOT remove the upgrade request yet — both sides need the Firebase signal
+    // paths (requesterSignals/responderSignals under the response ref) for ICE
+    // negotiation. Removing the request deletes the entire subtree including signals.
+    // Clean up after the connection succeeds or fails.
+    if (upgradePeer) {
+      var cleanedUp = false
+      var cleanupRequest = function () {
+        if (!cleanedUp) {
+          cleanedUp = true
+          firebase.remove(upgradeRequestRef)
+        }
+      }
+      upgradePeer.on('connect', cleanupRequest)
+      upgradePeer.on('close', cleanupRequest)
+    }
 
     // Close server after initiating P2P (so we don't re-enter requesting state)
     // Remove listeners first to prevent _onpeerDisconnect from firing
