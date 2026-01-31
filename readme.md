@@ -31,7 +31,7 @@ $ npm install
 
 ## Development
 
-Start all 3 servers (example app, relay server, 3D visualizer) with one command:
+Start the example app and relay server:
 ```
 $ npm run dev
 ```
@@ -42,10 +42,12 @@ $ npm run dev
 | Relay server | 8082 | `npm run dev:relay` |
 | 3D Visualizer | 8081 | `npm run dev:viz` |
 
-Run just the example + visualizer without the relay server (pure P2P):
+Run just the example app without the relay server (pure P2P):
 ```
 $ npm run dev:p2p
 ```
+
+For the 3D visualizer, clone [fireflower-visualizer](https://github.com/common-tater/fireflower-visualizer) alongside this repo and run `npm run dev:viz`, or `npm run dev:all` to start everything together.
 
 ## Example
 ```

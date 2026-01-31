@@ -194,17 +194,11 @@ npm run build          # builds example/build.js
 ## Running
 
 ```bash
-# Terminal 1: Example app (port 8080)
-node example/server.js
-
-# Terminal 2: Relay server (port 8082)
-node relay-server.js
-
-# Terminal 3: Visualizer (port 8081) — separate repo
-cd ../fireflower-visualizer && npm start
+npm run dev        # example app (8080) + relay server (8082)
+npm run dev:all    # above + 3D visualizer (8081) — requires ../fireflower-visualizer
+npm run dev:p2p    # example app only, no relay server
+npm run dev:viz    # 3D visualizer only — requires ../fireflower-visualizer
 ```
-
-Note: The `npm run dev` and `npm run dev:viz` scripts in package.json still reference a local `visualizer/` subdirectory that no longer exists. Use the individual commands above, or start the visualizer from its separate repo.
 
 ### Configurable Firebase path
 The example app reads `?path=<name>` from the URL query string, defaulting to `'tree'`. This enables multiple independent trees on the same Firebase database — each path gets its own requests, reports, configuration, and node space. The 3D visualizer also supports path via URL pathname (e.g., `http://localhost:8081/my-path`).
