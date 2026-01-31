@@ -8,7 +8,7 @@ var h = require('./helpers')
 var ROOT = path.join(__dirname, '..')
 var EXAMPLE_PORT = 8080
 var RELAY_PORT = 8082
-var URL = 'http://localhost:' + EXAMPLE_PORT
+var URL = 'http://localhost:' + EXAMPLE_PORT + '/?path=' + h.TEST_PATH
 
 // Allow running a single scenario: node test/run.js 3
 var onlyScenario = process.argv[2] ? parseInt(process.argv[2], 10) : null
@@ -306,10 +306,10 @@ async function scenario11 (page, ctx) {
   // Restart relay server
   h.log('  Restarting relay server...')
   ctx.relayProcess = startRelayServer()
-  await h.wait(5000) // let server reconnect
+  await h.wait(8000) // let server start, connect to tree, and begin responding
 
-  // Nodes should recover
-  await h.waitForAllConnected(page, 4, 30000)
+  // Nodes should recover — they need to timeout old requests, re-request, and connect via new server
+  await h.waitForAllConnected(page, 4, 60000)
   h.log('  Nodes recovered after server restart')
   await h.setForceServer(page, false)
 }
@@ -361,7 +361,7 @@ function startExampleServer () {
 }
 
 function startRelayServer () {
-  var proc = spawn('node', ['relay-server.js'], {
+  var proc = spawn('node', ['relay-server.js', '--firebase-path', h.TEST_PATH], {
     cwd: ROOT,
     env: Object.assign({}, process.env, { PORT: RELAY_PORT }),
     stdio: ['ignore', 'pipe', 'pipe']
