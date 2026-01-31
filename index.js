@@ -31,7 +31,7 @@ function ts () {
 //     Too low → false positives (especially in background tabs where timers are throttled).
 //     Too high → slow detection, defeating the purpose.
 var HEARTBEAT_INTERVAL = 2000  // ms — parent sends every 2s
-var HEARTBEAT_TIMEOUT = 5000   // ms — child considers parent dead after 5s of silence
+var HEARTBEAT_TIMEOUT = 4000   // ms — child considers parent dead after 4s of silence
 
 function deepMerge (target, source) {
   for (var key in source) {
