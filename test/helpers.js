@@ -57,9 +57,11 @@ async function getNodeStates (page) {
         transport: root.model.transport || null,
         upstream: root.model.upstream ? root.model.upstream.id : null,
         downstreamCount: Object.keys(root.model.downstream || {}).length,
+        downstreamIds: Object.keys(root.model.downstream || {}),
         isRoot: true,
         hasServerFallback: !!root.model._serverFallback,
         hasServerInfo: !!root.model._serverInfo,
+        ancestors: root.model._ancestors || [],
         debugLog: (root.model._debugLog || []).slice(-10)
       }
     }
@@ -75,9 +77,11 @@ async function getNodeStates (page) {
         transport: node.model.transport || null,
         upstream: node.model.upstream ? node.model.upstream.id : null,
         downstreamCount: Object.keys(node.model.downstream || {}).length,
+        downstreamIds: Object.keys(node.model.downstream || {}),
         isRoot: false,
         hasServerFallback: !!node.model._serverFallback,
         hasServerInfo: !!node.model._serverInfo,
+        ancestors: node.model._ancestors || [],
         debugLog: (node.model._debugLog || []).slice(-10)
       }
     }

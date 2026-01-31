@@ -85,12 +85,12 @@ When the Reset button clears Firebase data and the root page refreshes, the rela
 ### Upgrade requests must be cleaned up from Firebase
 `_attemptUpgrade` publishes a secondary Firebase request to find P2P peers. When a response is accepted, the timeout handler (which normally cleans up the request) is cancelled. If the request is not explicitly removed after acceptance, it stays in Firebase permanently. Other nodes see it via `onChildAdded` replay and respond to a stale request, wasting resources and potentially creating unwanted connections. Fix: call `firebase.remove(upgradeRequestRef)` immediately after accepting a response in `_attemptUpgrade`.
 
-### Circle prevention: child must never accept parent as downstream
-The mask-based circle check (`peerId === this._mask`) does NOT work during normal steady-state operation because root never initializes `_mask` — it stays `undefined` for the entire tree. This means the only effective circle check is `peerId === this.id` (self-connection).
+### Circle prevention: ancestor chain for transitive circle detection
+The original mask-based circle check (`peerId === this._mask`) only carried a single ancestor ID and root never initialized `_mask`, so it stayed `undefined` for the entire tree. The direct parent check (`this.upstream.id === peerId`) only catches 2-node circles (A ↔ B). With simultaneous P2P upgrades from server, N-node circles can form: A → B → C → D → A. This happens when multiple server-connected nodes upgrade at the same time — they respond to each other's requests and form a web of connections where the mask hasn't propagated yet.
 
-When two nodes both upgrade from server to P2P close together in time, a circle can form: Node A upgrades and connects to Node B as child. Then Node B's upgrade timer fires and publishes a request. Node A responds (it has capacity, the request is new, and the mask check fails). Node A becomes both child and parent of Node B. Mask updates then bounce infinitely between them (async loop via data channel `notifications.send()`), flooding the event loop, which starves heartbeat timers and causes the entire tree to collapse.
+Fix: propagate a **full ancestor list** through mask updates instead of just a single ID. Each node's `_ancestors` array contains the IDs of every node between it and root. In `_ondownstreamConnect`, the parent sends `{ mask, level, ancestors: [...this._ancestors, this.id] }`. In `_onrequest`, the check `this._ancestors.indexOf(peerId) !== -1` catches any transitive ancestor trying to become a child, regardless of how many hops away. Root initializes `_mask = this.id`, `_level = 0`, `_ancestors = []` in `_doconnect`. When a subtree disconnects, `_onupstreamDisconnect` sets `ancestors: [this.id]` so descendants know their disconnected subtree root.
 
-Fix: in `_onrequest`, always check `this.upstream && this.upstream.id === peerId`. A node must never accept its own upstream parent as a downstream child. This catches direct parent-child circles regardless of mask state.
+The direct parent check (`this.upstream.id === peerId`) is kept as a fast path alongside the ancestor check.
 
 ### Server-first connection design
 The `serverFirst` option (default: true) causes `_reviewResponses` to prefer server candidates over P2P when both are available. This gives nodes instant data through the relay server while P2P negotiation happens in the background via the upgrade timer. When no server is running, `serverCandidates.length` is 0 and the code falls through to the normal P2P path — P2P-only mode is completely unaffected. The `isServer` node always has `serverFirst: false` (it IS the server). Root also ignores it (root has no upstream).
@@ -193,3 +193,4 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 18. Force Server Downgrade (P2P → Server) — toggle serverOnly ON, all P2P nodes switch to server
 19. Force Server ON then OFF (roundtrip) — P2P → server → P2P
 20. Simultaneous Server→P2P Upgrades — many nodes upgrade at once, no circles or stuck nodes
+21. Transitive Circle Prevention During Upgrades — verify ancestor chain prevents N-node circles

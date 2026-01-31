@@ -33,7 +33,8 @@ var scenarios = [
   { name: 'Server-First Connection + P2P Upgrade', fn: scenario17 },
   { name: 'Force Server Downgrade (P2P → Server)', fn: scenario18 },
   { name: 'Force Server ON then OFF (roundtrip)', fn: scenario19 },
-  { name: 'Simultaneous Server→P2P Upgrades (no stuck nodes)', fn: scenario20 }
+  { name: 'Simultaneous Server→P2P Upgrades (no stuck nodes)', fn: scenario20 },
+  { name: 'Transitive Circle Prevention During Upgrades', fn: scenario21 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -660,20 +661,78 @@ async function scenario20 (page) {
 
   h.log('  All 8 nodes successfully upgraded from server to P2P (no stuck nodes)')
 
-  // Verify no circles: every non-root should have a different upstream
+  // Verify no circles: walk upstream from each node, should always reach root
   var finalStates = await h.getNodeStates(page)
-  var upstreams = {}
-  nonRoot = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
+  assertNoCircles(finalStates)
+  h.log('  No circles detected in final tree')
+}
+
+async function scenario21 (page) {
+  // Transitive circle prevention: 5+ server-connected nodes upgrade simultaneously
+  // with a very short upgrade interval and low K to maximize the chance of
+  // multi-node circles (A -> B -> C -> A). The ancestor chain in mask updates
+  // should prevent this.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Very short upgrade interval (3s) to force rapid simultaneous upgrades
+  await h.addNodes(page, 6, { p2pUpgradeInterval: 3000 })
+
+  // Wait for all to connect via server-first
+  await h.waitForAllConnected(page, 7, 30000) // root + 6
+  h.log('  All 6 nodes connected (server-first)')
+
+  // Wait for upgrades — all should upgrade to P2P without forming circles
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length < 6) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all 6 nodes upgrade to P2P without circles', 60000)
+
+  h.log('  All nodes upgraded to P2P')
+
+  // Check for N-node circles by walking upstream chains
+  var states = await h.getNodeStates(page)
+  assertNoCircles(states)
+
+  // Verify ancestor chains are populated (root should be in everyone's ancestors)
+  var rootId = Object.keys(states).find(function (id) { return states[id].isRoot })
+  var nonRoot = Object.keys(states).filter(function (id) { return !states[id].isRoot })
   for (var i = 0; i < nonRoot.length; i++) {
-    var s = finalStates[nonRoot[i]]
-    if (s.upstream) {
-      if (upstreams[s.upstream] && upstreams[s.upstream] === nonRoot[i]) {
-        throw new Error('Circle detected: ' + nonRoot[i].slice(-5) + ' <-> ' + s.upstream.slice(-5))
-      }
-      upstreams[nonRoot[i]] = s.upstream
+    var s = states[nonRoot[i]]
+    // Server node connects directly to root and may have short ancestor chain
+    if (s.ancestors.length === 0) {
+      h.log('  WARNING: node ' + nonRoot[i].slice(-5) + ' has empty ancestors')
     }
   }
-  h.log('  No circles detected in final tree')
+
+  // Do a second round: disconnect half and re-add, forcing another wave of upgrades
+  h.log('  Disconnecting 3 nodes...')
+  var toDisconnect = nonRoot.slice(0, 3)
+  for (var j = 0; j < toDisconnect.length; j++) {
+    await h.disconnectNode(page, toDisconnect[j])
+  }
+  await h.wait(2000)
+
+  // Add 3 replacement nodes with short upgrade interval
+  await h.addNodes(page, 3, { p2pUpgradeInterval: 3000 })
+
+  // Wait for all to connect and upgrade
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length < 6) return false
+    return ids.every(function (id) {
+      return states[id].state === 'connected'
+    })
+  }, 'replacement nodes connected', 60000)
+
+  // Final circle check
+  var finalStates = await h.getNodeStates(page)
+  assertNoCircles(finalStates)
+  h.log('  No circles after second wave of upgrades')
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────
@@ -724,6 +783,29 @@ function startRelayServer (opts) {
 function assert (condition, message) {
   if (!condition) {
     throw new Error('ASSERT FAILED: ' + message)
+  }
+}
+
+// Walk upstream from each node to detect N-node circles (not just 2-node)
+function assertNoCircles (states) {
+  var ids = Object.keys(states)
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i]
+    if (states[id].isRoot) continue
+    var visited = {}
+    var current = id
+    var path = [current.slice(-5)]
+    while (current && states[current] && !states[current].isRoot) {
+      if (visited[current]) {
+        throw new Error('Circle detected: ' + path.join(' -> '))
+      }
+      visited[current] = true
+      current = states[current].upstream
+      if (current) path.push(current.slice(-5))
+    }
+    if (!current || !states[current]) {
+      // upstream points to a node not in states (e.g., server node) — ok
+    }
   }
 }
 

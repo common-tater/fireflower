@@ -88,6 +88,9 @@ function Node (path, opts) {
   // dedup: track request IDs we've already responded to
   this._respondedRequests = {}
 
+  // ancestor chain for transitive circle detection
+  this._ancestors = []
+
   // diagnostic ring buffer — last 50 events, readable from outside
   this._debugLog = []
 
@@ -313,6 +316,9 @@ Node.prototype._doconnect = function () {
       console.log('[' + ts() + '] [fireflower] connected as root', self.id)
       debug(self.id + ' connected as root')
       self._connectedAt = Date.now()
+      self._mask = self.id
+      self._level = 0
+      self._ancestors = []
       self.state = 'connected'
       self.emit('statechange')
 
@@ -391,13 +397,21 @@ Node.prototype._onrequest = function (snapshot) {
     return
   }
 
-  // prevent circles and self-connections
-  if (peerId === this._mask || peerId === this.id) {
-    this._log('SKIP request ' + requestId.slice(-5) + ': self/circle (peerId=' + peerId.slice(-5) + ' mask=' + (this._mask || 'none').slice(-5) + ')')
+  // prevent self-connection
+  if (peerId === this.id) {
+    this._log('SKIP request ' + requestId.slice(-5) + ': self-connection')
     return
   }
 
-  // prevent direct circle: don't accept our own upstream as downstream
+  // prevent circles: check single mask, full ancestor chain, and direct upstream
+  if (peerId === this._mask) {
+    this._log('SKIP request ' + requestId.slice(-5) + ': mask circle (peerId=' + peerId.slice(-5) + ' mask=' + (this._mask || 'none').slice(-5) + ')')
+    return
+  }
+  if (this._ancestors && this._ancestors.indexOf(peerId) !== -1) {
+    this._log('SKIP request ' + requestId.slice(-5) + ': ancestor circle (peerId=' + peerId.slice(-5) + ' is in ancestor chain)')
+    return
+  }
   if (this.upstream && this.upstream.id === peerId) {
     this._log('SKIP request ' + requestId.slice(-5) + ': requester is our upstream')
     return
@@ -1171,10 +1185,12 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   // attempt to reconnect if we were not disconnected intentionally
   if (!this._preventReconnect) {
 
-    // mask off our descendants
+    // mask off our descendants — include self in ancestors so children
+    // know not to accept us (or each other) as downstream
     this._updateMask({
       mask: this.id,
-      level: 0x10000
+      level: 0x10000,
+      ancestors: [this.id]
     })
 
     // give our mask update a head start and/or wait longer if we timed out
@@ -1200,11 +1216,12 @@ Node.prototype._ondownstreamConnect = function (peer) {
     firebase.off(this._requestsRef, 'child_added', this._onrequest)
   }
 
-  // make sure downstream has the most up to date mask
+  // make sure downstream has the most up to date mask (including ancestor chain)
   try {
     peer.notifications.send(JSON.stringify({
       mask: this._mask,
-      level: this._level || 0
+      level: this._level || 0,
+      ancestors: (this._ancestors || []).concat([this.id])
     }))
   } catch (err) {
     console.warn(this.id + ' failed to send initial mask update to ' + peer.id, err)
@@ -1290,21 +1307,35 @@ Node.prototype._onheartbeat = function (peer) {
 
 Node.prototype._updateMask = function (data) {
   this._mask = data.mask
+  this._ancestors = data.ancestors || []
   this._level = ++data.level
 
-  debug(this.id + ' set mask to ' + this._mask + ' and level to ' + this._level)
+  debug(this.id + ' set mask to ' + this._mask + ' and level to ' + this._level + ' ancestors: ' + this._ancestors.length)
 
-  // oops we made a circle, fix that
+  // oops we made a circle, fix that — check both single mask and full ancestor list
   if (this.downstream[this._mask]) {
     debug(this.id + ' destroying accidental circle back to ' + this._mask)
     this.downstream[this._mask].close()
+  }
+  for (var a = 0; a < this._ancestors.length; a++) {
+    if (this.downstream[this._ancestors[a]]) {
+      debug(this.id + ' destroying accidental circle back to ancestor ' + this._ancestors[a])
+      this.downstream[this._ancestors[a]].close()
+    }
+  }
+
+  // Relay to children with our id appended to the ancestor chain
+  var relayData = {
+    mask: data.mask,
+    level: data.level,
+    ancestors: this._ancestors.concat([this.id])
   }
 
   for (var i in this.downstream) {
     var notifications = this.downstream[i].notifications
     if (notifications && notifications.readyState === 'open') {
       try {
-        notifications.send(JSON.stringify(data))
+        notifications.send(JSON.stringify(relayData))
       } catch (err) {
         console.warn(this.id + ' failed to relay mask update downstream', err)
       }
