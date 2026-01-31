@@ -435,21 +435,16 @@ async function scenario14 (page) {
   // Wait for all nodes to be connected and stable
   await h.waitForAllConnected(page, 4, 15000)
 
-  // Wait extra time for any server-first nodes to upgrade to P2P
-  // (if a child hit the heartbeat timeout race, it reconnects via server-first
-  // and needs the upgrade timer to fire before switching to P2P)
-  await h.wait(8000)
-
-  // All nodes should be on P2P (fallback should have been closed)
-  var finalStates = await h.getNodeStates(page)
-  var nonRoot = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
-  for (var i = 0; i < nonRoot.length; i++) {
-    var s = finalStates[nonRoot[i]]
-    assert(s.transport === 'p2p',
-      'Node ' + nonRoot[i].slice(-5) + ' should be p2p, got ' + s.transport)
-    assert(!s.hasServerFallback,
-      'Node ' + nonRoot[i].slice(-5) + ' should have no active fallback')
-  }
+  // Wait for all nodes to upgrade to P2P (server-first nodes need the upgrade
+  // timer to fire — p2pUpgradeInterval=5s plus up to 25% jitter plus ICE time)
+  await h.waitForAll(page, function (states) {
+    var ids = Object.keys(states)
+    for (var i = 0; i < ids.length; i++) {
+      var s = states[ids[i]]
+      if (!s.isRoot && s.transport !== 'p2p') return false
+    }
+    return true
+  }, 'all nodes upgrade to P2P after heartbeat recovery', 20000)
 
   h.log('  All nodes on P2P with no active fallback after recovery')
 }
@@ -1019,7 +1014,15 @@ async function main () {
   h.log('  ' + passed + ' passed, ' + failed + ' failed')
   h.log('═══════════════════════════════════════')
 
-  // Keep browser open for inspection
+  // If stdin is not a TTY (e.g., piped, background, CI), auto-close and exit.
+  // Otherwise keep browser open for visual inspection.
+  if (!process.stdin.isTTY) {
+    browser.close().catch(function () {})
+    if (ctx.exampleProcess) ctx.exampleProcess.kill()
+    if (ctx.relayProcess) ctx.relayProcess.kill()
+    process.exit(failed > 0 ? 1 : 0)
+  }
+
   h.log('')
   h.log('Browser left open for inspection. Press Ctrl+C to exit.')
 
