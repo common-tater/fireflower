@@ -238,16 +238,17 @@ async function resetAll (page) {
   await wait(1000)
 }
 
-async function clearFirebase () {
+async function clearFirebase (path) {
   var db = getDb()
+  var p = path || TEST_PATH
   await Promise.all([
-    remove(ref(db, TEST_PATH + '/reports')),
-    remove(ref(db, TEST_PATH + '/requests'))
+    remove(ref(db, p + '/reports')),
+    remove(ref(db, p + '/requests'))
   ])
   // Set serverEnabled=false so relay server doesn't interfere during page load
-  await set(ref(db, TEST_PATH + '/configuration/serverEnabled'), false)
-  await set(ref(db, TEST_PATH + '/configuration/serverOnly'), false)
-  await remove(ref(db, TEST_PATH + '/configuration/serverUrl'))
+  await set(ref(db, p + '/configuration/serverEnabled'), false)
+  await set(ref(db, p + '/configuration/serverOnly'), false)
+  await remove(ref(db, p + '/configuration/serverUrl'))
 }
 
 async function clearFirebaseRequests () {

@@ -122,8 +122,38 @@ When the relay server process is killed (SIGKILL, crash), normal cleanup handler
 ### Server online detection uses serverUrl config, not report timestamps
 The 2D visualizer detects whether the relay server is running by watching `configuration/serverUrl` in Firebase — not by checking report timestamps. The relay server writes `serverUrl` on connect and removes it on disconnect (with `onDisconnect` as backup). Report timestamps are unreliable because `onValue` only fires on data changes, not on time passing, so a stale report can look fresh on page load. The `serverUrl` presence/absence is a binary signal that updates reactively.
 
+### _reviewRequests must use connected count, not total count
+`_reviewRequests` decides whether to re-subscribe to Firebase requests (i.e., resume accepting new children). It must use the count of **connected** downstream peers, not `Object.keys(this.downstream).length` (which includes pending peers still in ICE negotiation). During P2P upgrades, a node responds to many requests, creating pending downstream peers. Most never connect (the requester accepted a different response). These stale pending peers sit in `this.downstream` for up to `connectionTimeout` (5s). If `_reviewRequests` counts them, the node thinks it's at capacity and stops listening for requests — even though it has fewer than K connected children. This causes root isolation: root loses its connected children but can't accept new ones because pending peers block the resume check. The stop check in `_ondownstreamConnect` and the resume check in `_reviewRequests` must use the same metric (connected count).
+
 ### Debug ring buffer for post-mortem diagnostics
 Each node has a `_debugLog` array (ring buffer, last 50 entries) that captures key events: request skips with reasons, upstream connect/disconnect, state transitions. These write to the buffer only (no console output) so they're silent during normal operation. The test helper `waitForAll` dumps the ring buffer in timeout error messages, making it possible to diagnose stuck nodes after the fact.
+
+### Server-connected nodes MUST respond to requests (no blanket block)
+Previously, server-connected nodes were blocked from responding to any request (`_onrequest` returned early when `this._transport === 'server'`). The rationale was that they'd fill K capacity before upgrading to P2P. This created a **deadlock**: when root is at K capacity (e.g., relay + ghost node from external browser tab), ALL server-connected nodes refuse to respond to upgrade requests, and root can't accept either — nobody can upgrade to P2P and the tree is stuck. The existing circle prevention (ancestor chain check, upstream check, downstream check in `_attemptUpgrade`) is sufficient to prevent cycles. Server nodes accepting children may cause those children to reconnect after upgrade, but the system handles reconnection gracefully.
+
+### Stale Firebase requests from ghost nodes
+If a node's process is killed or a browser tab is closed without proper cleanup, its Firebase request may persist. When a new root starts, it sees the stale request, responds, and potentially wastes a K slot on a dead or ghost node. Fix: requests include a `t` (timestamp) field. `_onrequest` ignores requests older than 60 seconds and removes them from Firebase. This prevents ghost nodes from occupying capacity after restarts or crashes.
+
+### Ghost nodes from external browser tabs
+When running tests with `?path=test-tree`, any other browser tab (e.g., user's Brave browser) open on the same path joins the same tree. These "ghost nodes" are LIVE nodes with fresh timestamps, so the 60s stale request check doesn't catch them. They can fill root's K capacity (e.g., K=2 with relay + ghost = FULL), blocking test nodes from upgrading to P2P. Ghost nodes are not a bug — they're legitimate nodes on the same tree. The system must be resilient to unexpected nodes consuming root capacity. Key insight: the upgrade deadlock was not caused by ghost nodes per se, but by the now-removed server-transport-no-respond restriction that prevented server-connected nodes from forming P2P sub-trees when root was full.
+
+### Console.log strategy for index.js
+Strategic console.logs remain in index.js for key topology and diagnostic events: upstream/downstream connected/disconnected, `_dorequest` with full state, `_reviewResponses` with candidate counts, `_reviewRequests` decisions (SUBSCRIBING/SKIP/FULL), `_attemptUpgrade`, and request SKIP reasons. All other diagnostic info goes to the `_debugLog` ring buffer (via `this._log()`). This keeps console output focused on connection topology while preserving full diagnostic data for post-mortem analysis via `waitForAll` timeout dumps. When debugging a specific issue, add temporary console.logs but remove them before committing.
+
+### `_reviewRequests` must use connected count not total count
+`_reviewRequests` re-subscribes to Firebase requests when a node has capacity. It must count only `didConnect` peers (completed ICE), not total `downstream` entries (which include pending peers stuck in ICE negotiation). Pending peers from stale requests can accumulate and block the node from accepting new connections. The stop check in `_ondownstreamConnect` already uses connected count — `_reviewRequests` must match.
+
+### Zombie pending peers from serverOnly nodes block capacity
+When `serverOnly` is true, nodes only accept server responses. But their Firebase requests are visible to all responders, including root and P2P nodes. Root responds to these requests, creating pending downstream peers. The `serverOnly` node ignores root's P2P response (it only wants server), but root's pending entry persists for `connectionTimeout` (5s). Previously, a `pendingCount >= K` cap in `_onrequest` blocked root from responding to ANY new requests while these zombie pending peers existed. Fix: remove the pending count cap entirely — the connected count cap (`connected >= K`) is the real gate. Zombie pending peers expire harmlessly after 5s.
+
+### Requests include serverOnly flag to prevent wasted responses
+Requests now include `serverOnly: this.serverOnly` in the request data. In `_onrequest`, non-server nodes skip requests where `request.serverOnly === true`. This prevents the zombie pending peer problem at the source — P2P nodes don't waste a downstream slot responding to a node that will ignore the response.
+
+### Stale downstream entry blocks relay from responding to serverOnly requests
+When the relay responds to a node's upgrade request, it creates a downstream entry with `didConnect: true`. If the node chose a different parent (e.g., root accepted faster), the relay's downstream entry becomes a zombie — ICE completed but the node uses a different upstream. When the node later publishes a `serverOnly` request (force-server switch), the relay's `_onrequest` sees `this.downstream[peerId]` exists with `didConnect: true` and silently returns (line 484: "already connected, must be upgrade request — skip it"). But this is a brand new request, not an upgrade. Fix: when `request.serverOnly && this.isServer`, close the stale downstream entry and respond to the new request. The `didConnect` skip is still correct for non-serverOnly requests (actual upgrade requests from connected children).
+
+### serverOnly race condition: config change arrives after server disconnect
+When force-server is toggled OFF and the server is disabled, two things happen: (1) the relay server shuts down, closing WebSocket connections instantly, and (2) the Firebase config change propagates to all nodes. The WebSocket close is immediate but the Firebase config takes a network round-trip. A node connected via server detects the disconnect first and calls `_dorequest` with stale `serverOnly=true`. Root sees the request but skips it (`request.serverOnly && !this.isServer`). Seconds later the config change arrives, setting `this.serverOnly = false`, but `_onconfig` only handled this transition when `state === 'connected'` and `transport === 'server'` — not when in `requesting` state. Fix: add a branch in `_onconfig` that detects `wasServerOnly && !this.serverOnly && this.state === 'requesting'` and restarts the request with the corrected `serverOnly=false` flag. The old request (with `serverOnly=true`) is removed from Firebase and a new one is published that P2P nodes can respond to.
 
 ## Build
 
@@ -150,10 +180,10 @@ The example app reads `?path=<name>` from the URL query string, defaulting to `'
 
 ## Testing
 
-Automated test suite using Puppeteer that runs 20 scenarios with a visible browser:
+Automated test suite using Puppeteer that runs 22 scenarios with a visible browser:
 
 ```bash
-npm test           # Run all 20 scenarios
+npm test           # Run all 22 scenarios
 node test/run.js 3 # Run only scenario 3
 ```
 
@@ -169,7 +199,7 @@ Tests use the isolated Firebase path `test-tree` (not the default `tree`) so the
 Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to watch tests in 3D.
 
 ### Test files
-- `test/run.js` — Main test runner with all 20 scenarios
+- `test/run.js` — Main test runner with all 21 scenarios
 - `test/helpers.js` — Shared utilities (addNodes, waitForAllConnected, setK, etc.); `TEST_PATH` constant defines the isolated path
 
 ### Scenarios
@@ -194,3 +224,4 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 19. Force Server ON then OFF (roundtrip) — P2P → server → P2P
 20. Simultaneous Server→P2P Upgrades — many nodes upgrade at once, no circles or stuck nodes
 21. Transitive Circle Prevention During Upgrades — verify ancestor chain prevents N-node circles
+22. Minimal Server→P2P Switch — 1 peer on forced server, server disabled, peer reconnects to root via P2P
