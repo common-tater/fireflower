@@ -71,6 +71,12 @@ function Node (path, opts) {
   this._upgradeTimer = null
   this._pendingAdapters = {}
 
+  // server fallback: secondary server connection as warm standby
+  this._serverFallback = null
+  this._serverInfo = null  // cached {id, serverUrl} from server responses
+  this.serverFallbackDelay = opts.serverFallbackDelay !== undefined
+    ? opts.serverFallbackDelay : 1000
+
   // health tracking
   this._connectedAt = null
   this._reconnectTimes = []  // timestamps of recent disconnects
@@ -192,10 +198,18 @@ Node.prototype.disconnect = function () {
   // stop upgrade timer
   this._stopUpgradeTimer()
 
-  // stop heartbeat timeout (child side)
+  // close server fallback
+  this._closeServerFallback()
+  this._serverInfo = null
+
+  // stop heartbeat timeout and warning (child side)
   if (this._heartbeatTimeout) {
     clearTimeout(this._heartbeatTimeout)
     this._heartbeatTimeout = null
+  }
+  if (this._heartbeatWarning) {
+    clearTimeout(this._heartbeatWarning)
+    this._heartbeatWarning = null
   }
 
   // close upstream connection
@@ -282,12 +296,14 @@ Node.prototype._dorequest = function () {
   debug(this.id + ' requesting connection')
   var self = this
 
-  this._requestRef = firebase.push(this._requestsRef, {
+  var requestData = {
     id: this.id,
     removal_flag: {
       removed: false
     }
-  })
+  }
+  if (this.isServer) requestData.isServer = true
+  this._requestRef = firebase.push(this._requestsRef, requestData)
 
   // make sure no one removes our request until we're connected
   var removalFlagRef = firebase.child(this._requestRef, 'removal_flag')
@@ -312,16 +328,19 @@ Node.prototype._onrequest = function (snapshot) {
     return // can't respond to requests unless we are connected
   }
 
-  if (Object.keys(this.downstream).length >= this.opts.K) {
-    return // can't respond to requests if we've hit K peers
-  }
-
   var self = this
   var requestRef = snapshot.ref
   var requestId = snapshot.key
   var request = snapshot.val()
-  debug(this.id + ' saw request ' + requestId + ' from ' + peerId)
   var peerId = request.id
+  debug(this.id + ' saw request ' + requestId + ' from ' + peerId)
+
+  // Root always accepts server node requests (server needs a direct root connection).
+  // All other nodes respect the K limit.
+  var isServerRequest = request.isServer
+  if (Object.keys(this.downstream).length >= this.opts.K && !(this.root && isServerRequest)) {
+    return // can't respond to requests if we've hit K peers
+  }
 
   // responders may accidentally recreate requests
   // these won't have an id though and can be removed
@@ -447,6 +466,7 @@ Node.prototype._reviewResponses = function () {
     var c = candidates[j]
     if (candidates[c.upstream]) continue // skip if upstream also responded
     if (c.transport === 'server') {
+      this._serverInfo = { id: c.id, serverUrl: c.serverUrl }
       serverCandidates.push(c)
     } else {
       p2pCandidates.push(c)
@@ -685,6 +705,180 @@ Node.prototype._attemptUpgrade = function () {
   }, self.connectionTimeout)
 }
 
+/**
+ * Attempt to establish a secondary server connection as a warm standby.
+ * Triggered by heartbeat early warning when P2P upstream seems unhealthy.
+ */
+Node.prototype._attemptServerFallback = function () {
+  if (this._transport !== 'p2p') return
+  if (this.state !== 'connected') return
+  if (this._serverFallback) return
+  if (!this._serverInfo) return
+
+  var self = this
+  debug(this.id + ' attempting server fallback')
+
+  var fallbackRequestRef = firebase.push(this._requestsRef, {
+    id: this.id,
+    removal_flag: { removed: false }
+  })
+
+  var fallbackResponsesRef = firebase.child(fallbackRequestRef, 'responses')
+  var fallbackTimeout = null
+
+  var onFallbackResponse = function (snapshot) {
+    var response = snapshot.val()
+    response.id = snapshot.key
+    response.ref = snapshot.ref
+
+    // Only accept server responses
+    if (response.transport !== 'server') return
+
+    firebase.off(fallbackResponsesRef, 'child_added', onFallbackResponse)
+    self._clearTimeout(fallbackTimeout)
+
+    debug(self.id + ' got server fallback response from ' + response.id)
+    firebase.remove(fallbackRequestRef)
+    self._connectServerFallback(response)
+  }
+
+  firebase.onChildAdded(fallbackResponsesRef, onFallbackResponse)
+
+  // Timeout: clean up if no server responds
+  fallbackTimeout = this._setTimeout(function () {
+    firebase.off(fallbackResponsesRef, 'child_added', onFallbackResponse)
+    firebase.remove(fallbackRequestRef)
+  }, self.connectionTimeout)
+}
+
+/**
+ * Establish a secondary server connection (warm standby).
+ * The fallback receives data but its mask/level updates are ignored.
+ */
+Node.prototype._connectServerFallback = function (response) {
+  var self = this
+  var transport = new ServerTransport({
+    url: response.serverUrl,
+    nodeId: this.id,
+    initiator: true
+  })
+
+  transport.id = response.id
+  transport.transportType = 'server'
+
+  transport.on('connect', function () {
+    // Check we still need the fallback
+    if (self._transport !== 'p2p' || self.state !== 'connected') {
+      transport.removeAllListeners()
+      transport.close()
+      return
+    }
+    console.log('[' + ts() + '] [fireflower] server fallback connected', self.id)
+    self._serverFallback = transport
+  })
+
+  transport.on('close', function () {
+    if (self._serverFallback === transport) {
+      self._serverFallback = null
+    }
+  })
+
+  // Handle notifications channel — ignore mask updates, only track heartbeats
+  transport.on('datachannel', function (channel) {
+    if (channel.label === 'notifications') {
+      channel.onmessage = function (evt) {
+        var data = JSON.parse(evt.data)
+        if (data.type === 'heartbeat') {
+          // Track server fallback heartbeat for liveness
+          if (self._serverFallbackHeartbeat) clearTimeout(self._serverFallbackHeartbeat)
+          self._serverFallbackHeartbeat = setTimeout(function () {
+            // Server fallback went silent — close it
+            if (self._serverFallback === transport) {
+              console.log('[' + ts() + '] [fireflower] server fallback heartbeat timeout', self.id)
+              self._closeServerFallback()
+            }
+          }, HEARTBEAT_TIMEOUT)
+        }
+        // Ignore mask updates — keep primary upstream's tree position
+      }
+    }
+  })
+}
+
+/**
+ * Promote server fallback to primary upstream.
+ * Called when P2P upstream dies and fallback is already connected.
+ */
+Node.prototype._promoteServerFallback = function () {
+  var fallback = this._serverFallback
+  this._serverFallback = null
+
+  // Clear fallback heartbeat timer
+  if (this._serverFallbackHeartbeat) {
+    clearTimeout(this._serverFallbackHeartbeat)
+    this._serverFallbackHeartbeat = null
+  }
+
+  // Set up as primary upstream
+  this.upstream = fallback
+  this._transport = 'server'
+  this._connectedAt = Date.now()
+
+  console.log('[' + ts() + '] [fireflower] promoted server fallback to primary', this.id, '->', fallback.id)
+
+  // Switch notification handler to accept mask updates (was ignoring them)
+  var self = this
+  fallback.removeAllListeners('datachannel')
+  // Re-wire any existing notifications channel
+  if (fallback._channels && fallback._channels.notifications) {
+    var channel = fallback._channels.notifications
+    channel.onmessage = function (evt) {
+      var data = JSON.parse(evt.data)
+      if (data.type === 'heartbeat') {
+        self._onheartbeat(fallback)
+      } else {
+        self._onmaskUpdate(evt)
+      }
+    }
+  }
+
+  // Wire close handler
+  fallback.removeAllListeners('close')
+  fallback.on('close', self._onpeerDisconnect.bind(self, fallback, null))
+
+  // change state -> connected
+  this.state = 'connected'
+  this.emit('statechange')
+  this.emit('fallback')
+
+  // Start P2P upgrade timer (unless serverOnly)
+  if (this.p2pUpgradeInterval && !this.serverOnly) {
+    this._stopUpgradeTimer()
+    this._upgradeTimer = this._setTimeout(function () {
+      self._attemptUpgrade()
+    }, self.p2pUpgradeInterval)
+  }
+
+  // Resume responding to requests
+  this._reviewRequests()
+}
+
+/**
+ * Clean up and close the server fallback connection.
+ */
+Node.prototype._closeServerFallback = function () {
+  if (!this._serverFallback) return
+  console.log('[' + ts() + '] [fireflower] closing server fallback (P2P healthy)', this.id)
+  var fallback = this._serverFallback
+  this._serverFallback = null
+  if (this._serverFallbackHeartbeat) {
+    clearTimeout(this._serverFallbackHeartbeat)
+    this._serverFallbackHeartbeat = null
+  }
+  fallback.removeAllListeners()
+  fallback.close()
+}
+
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   debug(this.id + ' peer connected: ' + peer.id)
   peer.didConnect = true
@@ -781,10 +975,30 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   console.log('[' + ts() + '] [fireflower] upstream disconnected', this.id, '-x->', peer.id, 'transport:', peer.transportType)
   debug(this.id + ' lost upstream ' + peer.id)
 
-  // stop heartbeat timeout
+  // stop heartbeat timeout and warning
   if (this._heartbeatTimeout) {
     clearTimeout(this._heartbeatTimeout)
     this._heartbeatTimeout = null
+  }
+  if (this._heartbeatWarning) {
+    clearTimeout(this._heartbeatWarning)
+    this._heartbeatWarning = null
+  }
+
+  // If we have a server fallback ready, promote it immediately
+  if (this._serverFallback && peer.didConnect) {
+    // stop responding to new requests temporarily
+    firebase.off(this._requestsRef, 'child_added', this._onrequest)
+    if (this._requestRef) {
+      firebase.remove(this._requestRef)
+    }
+    this.upstream = null
+    this._transport = null
+    this._stopUpgradeTimer()
+    this._reconnectTimes.push(Date.now())
+    this.emit('disconnect', peer)
+    this._promoteServerFallback()
+    return
   }
 
   // stop responding to new requests
@@ -800,6 +1014,9 @@ Node.prototype._onupstreamDisconnect = function (peer) {
   this._connectedAt = null
   this._reconnectTimes.push(Date.now())
   this._stopUpgradeTimer()
+
+  // Close any pending server fallback attempt
+  this._closeServerFallback()
 
   // change state -> disconnected
   if (this.state !== 'disconnected') {
@@ -903,10 +1120,27 @@ Node.prototype._onmaskUpdate = function (evt) {
 }
 
 Node.prototype._onheartbeat = function (peer) {
-  if (this._heartbeatTimeout) {
-    clearTimeout(this._heartbeatTimeout)
-  }
+  if (this._heartbeatTimeout) clearTimeout(this._heartbeatTimeout)
+  if (this._heartbeatWarning) clearTimeout(this._heartbeatWarning)
+
   var self = this
+
+  // P2P is healthy — close server fallback if we have one
+  if (this._serverFallback) {
+    this._closeServerFallback()
+  }
+
+  // Tier 1: Early warning — trigger server fallback attempt
+  if (this.serverFallbackDelay && this._serverInfo && this._transport === 'p2p') {
+    this._heartbeatWarning = setTimeout(function () {
+      if (self.upstream === peer && !peer._closed && !self._serverFallback) {
+        console.log('[' + ts() + '] [fireflower] heartbeat warning, attempting server fallback', self.id)
+        self._attemptServerFallback()
+      }
+    }, HEARTBEAT_INTERVAL + self.serverFallbackDelay)
+  }
+
+  // Tier 2: Kill — close upstream (existing behavior)
   this._heartbeatTimeout = setTimeout(function () {
     if (self.upstream === peer && !peer._closed) {
       console.log('[' + ts() + '] [fireflower] heartbeat timeout, closing upstream', self.id, '-x->', peer.id)
