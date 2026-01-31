@@ -36,7 +36,8 @@ var scenarios = [
   { name: 'Simultaneous Server→P2P Upgrades (no stuck nodes)', fn: scenario20 },
   { name: 'Transitive Circle Prevention During Upgrades', fn: scenario21 },
   { name: 'Minimal Server→P2P Switch (1 peer)', fn: scenario22 },
-  { name: 'Server-First Prefers Server Over P2P Root', fn: scenario23 }
+  { name: 'Server-First Prefers Server Over P2P Root', fn: scenario23 },
+  { name: 'Upgrade Skips Root (peers connect to each other)', fn: scenario24 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -831,6 +832,58 @@ async function scenario23 (page) {
     'Peer should be on P2P after upgrade')
 
   h.log('  Server-first -> P2P upgrade completed and stable')
+}
+
+async function scenario24 (page) {
+  // Server-connected nodes upgrading to P2P should connect to each other,
+  // not to root. Root's K capacity should be reserved for the relay server
+  // and naturally-joining nodes.
+  await h.setK(page, 3)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Add 3 nodes with short upgrade interval — they connect via server-first
+  var ids = await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
+  await h.waitForAllConnected(page, 4) // root + 3 peers
+
+  // Verify all started on server
+  var states = await h.getNodeStates(page)
+  var rootId = Object.keys(states).find(function (id) { return states[id].isRoot })
+  var serverCount = 0
+  for (var i = 0; i < ids.length; i++) {
+    if (states[ids[i]] && states[ids[i]].transport === 'server') serverCount++
+  }
+  h.log('  Initial: ' + serverCount + '/3 on server')
+
+  // Wait for at least 2 nodes to upgrade to P2P (the third may stay on server
+  // if no valid non-root peer is available to accept it)
+  await h.waitForAll(page, function (states) {
+    var p2pCount = 0
+    for (var j = 0; j < ids.length; j++) {
+      var s = states[ids[j]]
+      if (s && s.transport === 'p2p') p2pCount++
+    }
+    return p2pCount >= 2
+  }, 'at least 2 peers upgrade from server to P2P', 30000)
+
+  // Check that upgraded peers connected to each other, not to root
+  var finalStates = await h.getNodeStates(page)
+  var p2pPeers = []
+  var serverPeers = []
+  for (var k = 0; k < ids.length; k++) {
+    var s = finalStates[ids[k]]
+    if (s.transport === 'p2p') {
+      p2pPeers.push(ids[k])
+      assert(s.upstream !== rootId,
+        'Peer ' + ids[k].slice(-5) + ' upgraded to P2P but connected to root — should connect to another peer')
+    } else {
+      serverPeers.push(ids[k])
+    }
+  }
+
+  h.log('  ' + p2pPeers.length + ' peers upgraded to P2P (not via root), ' + serverPeers.length + ' stayed on server')
+  assert(p2pPeers.length >= 2,
+    'At least 2 peers should upgrade to P2P, got ' + p2pPeers.length)
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────

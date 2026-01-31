@@ -864,6 +864,8 @@ Node.prototype._attemptUpgrade = function () {
     if (self.blacklist.contains(response.id)) return
     // Don't accept our own downstream as upstream — would create a circle
     if (self.downstream[response.id]) return
+    // Skip root — upgrade to peers, not root (preserve root's K capacity)
+    if (!response.upstream) return
 
     upgradeAccepted = true
     self._log('upgrade ACCEPT ' + self.id.slice(-5) + ' <- ' + response.id.slice(-5))

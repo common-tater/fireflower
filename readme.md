@@ -83,7 +83,7 @@ The example app includes a 2D canvas visualization. Open http://localhost:8081 f
 - Node colors reflect health score (green = healthy, red = struggling)
 
 ## Testing
-Automated test suite using Puppeteer with 23 scenarios:
+Automated test suite using Puppeteer with 24 scenarios:
 
 ```
 $ npm test           # Run all scenarios
@@ -116,6 +116,7 @@ Tests launch a visible Chrome browser so you can watch nodes connect in the 2D v
 21. Transitive Circle Prevention During Upgrades
 22. Minimal Server→P2P Switch
 23. Server-First Prefers Server Over P2P Root
+24. Upgrade Skips Root
 
 ## Build
 ```
