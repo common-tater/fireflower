@@ -18,6 +18,7 @@
 var WebSocketServer = require('ws').Server
 var wrtc = require('node-datachannel/polyfill')
 var os = require('os')
+var ServerPeerAdapter = require('./server-peer-adapter')
 
 // Auto-detect LAN IP so remote devices (phones, other machines) can reach the
 // relay server. 0.0.0.0 only works for same-machine connections.
@@ -42,6 +43,7 @@ var firebasePath = process.env.FIREBASE_PATH || 'tree'
 var firebaseConfigPath = './example/firebase-config.js'
 var nodeId = process.env.NODE_ID || null
 var serverHost = process.env.SERVER_HOST || null
+var serverCapacity = process.env.SERVER_CAPACITY ? parseInt(process.env.SERVER_CAPACITY, 10) : null
 
 for (var i = 0; i < args.length; i++) {
   if (args[i] === '--port' && args[i + 1]) {
@@ -58,6 +60,9 @@ for (var i = 0; i < args.length; i++) {
     i++
   } else if (args[i] === '--host' && args[i + 1]) {
     serverHost = args[i + 1]
+    i++
+  } else if (args[i] === '--server-capacity' && args[i + 1]) {
+    serverCapacity = parseInt(args[i + 1], 10)
     i++
   }
 }
@@ -84,6 +89,7 @@ var opts = {
   isServer: true,
   K: 1000,
   serverUrl: serverUrl,
+  serverCapacity: serverCapacity,
   reportInterval: 5000,
   wrtc: wrtc,
   setTimeout: setTimeout.bind(global),
@@ -100,6 +106,9 @@ console.log('Node ID:', node.id)
 console.log('Port:', port)
 console.log('Firebase path:', firebasePath)
 console.log('Server URL:', serverUrl)
+if (serverCapacity) {
+  console.log('Server capacity:', serverCapacity)
+}
 console.log()
 
 // Create WebSocket server
@@ -111,6 +120,24 @@ wss.on('listening', function () {
 
 var nodeConnected = false
 
+function getConnectedCount () {
+  var count = 0
+  for (var id in node.downstream) {
+    if (node.downstream[id].didConnect) count++
+  }
+  return count
+}
+
+function updateServerCapacityState () {
+  if (!nodeConnected || !serverCapacity) return
+
+  var connectedCount = getConnectedCount()
+  var atCapacity = connectedCount >= serverCapacity
+  var capacityRef = ref(firebase.db, firebasePath + '/configuration/serverAtCapacity')
+  set(capacityRef, atCapacity)
+  onDisconnect(capacityRef).remove()
+}
+
 function publishServerPresence () {
   var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
   set(serverUrlConfigRef, serverUrl)
@@ -121,6 +148,9 @@ function publishServerPresence () {
   // Auto-remove server report on Firebase disconnect
   var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
   onDisconnect(reportRef).remove()
+
+  // Publish initial capacity state
+  updateServerCapacityState()
 }
 
 node.on('connect', function () {
@@ -140,7 +170,14 @@ node.on('disconnect', function () {
   // Remove server report
   var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
   remove(reportRef)
+  // Remove capacity state
+  var capacityRef = ref(firebase.db, firebasePath + '/configuration/serverAtCapacity')
+  remove(capacityRef)
 })
+
+// Update capacity state on downstream changes
+node.on('peerconnect', updateServerCapacityState)
+node.on('peerdisconnect', updateServerCapacityState)
 
 
 wss.on('connection', function (ws) {
@@ -170,6 +207,19 @@ wss.on('connection', function (ws) {
         delete node._pendingAdapters[clientId]
         adapter.wireUp(ws)
         console.log('Wired up adapter for', clientId)
+      } else if (node.state === 'connected') {
+        // Cold connection (direct server reconnect) — no Firebase request/response,
+        // client connected directly using cached serverUrl. Create adapter on the fly.
+        console.log('Cold connection from', clientId, '— creating adapter')
+        var coldAdapter = new ServerPeerAdapter(clientId, node.id)
+        node.downstream[clientId] = coldAdapter
+        coldAdapter.on('close', node._onpeerDisconnect.bind(node, coldAdapter, null))
+        coldAdapter.wireUp(ws)
+        // Create notifications channel (now that _ws is set, channel-open reaches client)
+        coldAdapter.notifications = coldAdapter.createDataChannel('notifications')
+        coldAdapter.notifications.onopen = function () {
+          node._onnotificationsOpen(coldAdapter)
+        }
       } else {
         console.warn('No pending adapter for client', clientId, '— closing')
         ws.close()
@@ -203,6 +253,20 @@ onValue(configRef, function (snapshot) {
     console.log('Server DISABLED via config — disconnecting from tree')
     serverActive = false
     node.disconnect()
+  }
+})
+
+// Watch serverCapacity from Firebase config (takes precedence over command line/env)
+var serverCapacityConfigRef = ref(firebase.db, firebasePath + '/configuration/serverCapacity')
+onValue(serverCapacityConfigRef, function (snapshot) {
+  var capacity = snapshot.val()
+  if (capacity != null) {
+    node.opts.serverCapacity = capacity
+    console.log('Server capacity updated from config:', capacity)
+    updateServerCapacityState()
+  } else if (serverCapacity) {
+    // Fall back to command line/env var if Firebase config is null
+    node.opts.serverCapacity = serverCapacity
   }
 })
 

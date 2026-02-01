@@ -13,16 +13,20 @@
     </div>
     <div id="logo">fireflower <span>example</span></div>
     <div id="controls">
-      <label id="k-number">
+      <label id="k-number" class="control-number">
         <span>K =</span>
         <input type="number" value="2" min="1">
       </label>
+      <label id="server-capacity-number" class="control-number">
+        <span>Server Cap =</span>
+        <input type="number" value="" min="0" placeholder="∞">
+      </label>
       <div class="control-sep"></div>
-      <label id="server-toggle">
+      <label id="server-toggle" class="control-toggle">
         <input type="checkbox" checked>
         <span>Server Node</span>
       </label>
-      <label id="force-server-toggle">
+      <label id="force-server-toggle" class="control-toggle">
         <input type="checkbox">
         <span>Force Server</span>
       </label>
@@ -31,41 +35,41 @@
     </div>
 
     <!-- Legend -->
-    <div class="ui-overlay ui-legend">
-      <div class="legend-title">Legend</div>
+    <div class="ui-overlay ui-panel ui-legend">
+      <div class="ui-panel-title">Legend</div>
       <div class="legend-item">
-        <div class="legend-dot" style="background:#44CC44"></div>
+        <div class="legend-dot" style="background:var(--color-healthy)"></div>
         Healthy
       </div>
       <div class="legend-item">
-        <div class="legend-dot" style="background:#FF8C19"></div>
+        <div class="legend-dot" style="background:var(--color-moderate)"></div>
         Moderate
       </div>
       <div class="legend-item">
-        <div class="legend-dot" style="background:#FFCC00"></div>
+        <div class="legend-dot" style="background:var(--color-degraded)"></div>
         Degraded
       </div>
       <div class="legend-item">
-        <div class="legend-dot" style="background:#FF4444"></div>
+        <div class="legend-dot" style="background:var(--color-struggling)"></div>
         Struggling
       </div>
       <div class="legend-item">
-        <div class="legend-dot" style="background:#666666"></div>
+        <div class="legend-dot" style="background:var(--color-disconnected)"></div>
         Disconnected
       </div>
       <div class="legend-item">
-        <div class="legend-line" style="background:#686868"></div>
+        <div class="legend-line" style="background:var(--color-p2p-link)"></div>
         P2P link
       </div>
       <div class="legend-item">
-        <div class="legend-line" style="background:#00CED1"></div>
+        <div class="legend-line" style="background:var(--color-server)"></div>
         Server link
       </div>
     </div>
 
     <!-- Stats -->
-    <div class="ui-overlay ui-stats" id="ui-stats">
-      <div class="stats-title">Network</div>
+    <div class="ui-overlay ui-panel ui-stats" id="ui-stats">
+      <div class="ui-panel-title">Network</div>
       <div class="stat-row">
         <span>Nodes</span>
         <span class="stat-value" id="stat-nodes">0</span>
