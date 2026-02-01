@@ -43,7 +43,8 @@ body {
   font-weight: 400;
 }
 
-#k-number {
+#k-number,
+#server-capacity-number {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -51,7 +52,8 @@ body {
   color: #999;
 }
 
-#k-number input {
+#k-number input,
+#server-capacity-number input {
   width: 40px;
   padding: 5px;
   font-family: inherit;
