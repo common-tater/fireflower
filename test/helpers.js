@@ -217,6 +217,15 @@ async function setK (page, value) {
   }, value)
 }
 
+async function setServerCapacity (page, value) {
+  log('  Setting serverCapacity=' + (value || '∞'))
+  await page.evaluate(function (value) {
+    var input = document.querySelector('#server-capacity-number input')
+    input.value = value || ''
+    input.dispatchEvent(new Event('change'))
+  }, value)
+}
+
 async function disconnectNode (page, nodeId) {
   log('  Disconnecting node ' + nodeId.slice(-5))
   await page.evaluate(function (nodeId) {
@@ -290,6 +299,7 @@ module.exports = {
   setServerEnabled: setServerEnabled,
   setForceServer: setForceServer,
   setK: setK,
+  setServerCapacity: setServerCapacity,
   disconnectNode: disconnectNode,
   reconnectNode: reconnectNode,
   resetAll: resetAll,

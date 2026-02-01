@@ -39,7 +39,8 @@ var scenarios = [
   { name: 'Server-First Prefers Server, Stays When No Upgrade Target', fn: scenario23 },
   { name: 'Upgrade Skips Root (peers connect to each other)', fn: scenario24 },
   { name: 'K Limit Enforced Under Rapid Connections', fn: scenario25 },
-  { name: 'Server-First Reconnection After Mid-Tree Disconnect', fn: scenario26 }
+  { name: 'Server-First Reconnection After Mid-Tree Disconnect', fn: scenario26 },
+  { name: 'Server Capacity Limit (excess nodes use P2P)', fn: scenario27 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -992,6 +993,53 @@ async function scenario26 (page) {
   if (sawServerTransport) {
     h.log('  Confirmed: orphaned nodes used server-first during reconnection')
   }
+}
+
+async function scenario27 (page) {
+  // Server Capacity Limit: Set serverCapacity to 3, add 6 nodes.
+  // First 3 should connect via server, remaining 3 should fall back to P2P.
+  // Root should have K=0 while server is not full, then revert to K when server fills up.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.setServerCapacity(page, 3)
+  await h.wait(2000) // let server connect and advertise capacity
+
+  // Add 6 nodes
+  await h.addNodes(page, 6)
+
+  // Wait for all to connect
+  var states = await h.waitForAllConnected(page, 7, 30000) // root + 6
+  var nonRoot = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+
+  // Count server vs P2P connections
+  var serverCount = 0
+  var p2pCount = 0
+  for (var i = 0; i < nonRoot.length; i++) {
+    if (states[nonRoot[i]].transport === 'server') serverCount++
+    else if (states[nonRoot[i]].transport === 'p2p') p2pCount++
+  }
+
+  h.log('  Server connections: ' + serverCount + ', P2P connections: ' + p2pCount)
+
+  // Verify capacity limit is enforced
+  assert(serverCount <= 3,
+    'Server should have at most 3 connections, got ' + serverCount)
+  assert(p2pCount >= 3,
+    'At least 3 nodes should use P2P when server is full, got ' + p2pCount)
+  assert(serverCount + p2pCount === 6,
+    'All 6 nodes should be connected')
+
+  // Verify root accepted P2P connections when server was full
+  var root = Object.keys(states).find(function (id) { return states[id].isRoot })
+  h.log('  Root downstream count: ' + states[root].downstreamCount)
+  // Root should have at least 1 P2P child (since server is at capacity)
+  assert(states[root].downstreamCount >= 1,
+    'Root should have accepted P2P connections when server was full')
+
+  h.log('  Server capacity limit enforced: ' + serverCount + ' server, ' + p2pCount + ' P2P')
+
+  // Clean up: remove capacity limit
+  await h.setServerCapacity(page, null)
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────

@@ -42,6 +42,7 @@ var firebasePath = process.env.FIREBASE_PATH || 'tree'
 var firebaseConfigPath = './example/firebase-config.js'
 var nodeId = process.env.NODE_ID || null
 var serverHost = process.env.SERVER_HOST || null
+var serverCapacity = process.env.SERVER_CAPACITY ? parseInt(process.env.SERVER_CAPACITY, 10) : null
 
 for (var i = 0; i < args.length; i++) {
   if (args[i] === '--port' && args[i + 1]) {
@@ -58,6 +59,9 @@ for (var i = 0; i < args.length; i++) {
     i++
   } else if (args[i] === '--host' && args[i + 1]) {
     serverHost = args[i + 1]
+    i++
+  } else if (args[i] === '--server-capacity' && args[i + 1]) {
+    serverCapacity = parseInt(args[i + 1], 10)
     i++
   }
 }
@@ -84,6 +88,7 @@ var opts = {
   isServer: true,
   K: 1000,
   serverUrl: serverUrl,
+  serverCapacity: serverCapacity,
   reportInterval: 5000,
   wrtc: wrtc,
   setTimeout: setTimeout.bind(global),
@@ -100,6 +105,9 @@ console.log('Node ID:', node.id)
 console.log('Port:', port)
 console.log('Firebase path:', firebasePath)
 console.log('Server URL:', serverUrl)
+if (serverCapacity) {
+  console.log('Server capacity:', serverCapacity)
+}
 console.log()
 
 // Create WebSocket server
@@ -111,6 +119,24 @@ wss.on('listening', function () {
 
 var nodeConnected = false
 
+function getConnectedCount () {
+  var count = 0
+  for (var id in node.downstream) {
+    if (node.downstream[id].didConnect) count++
+  }
+  return count
+}
+
+function updateServerCapacityState () {
+  if (!nodeConnected || !serverCapacity) return
+
+  var connectedCount = getConnectedCount()
+  var atCapacity = connectedCount >= serverCapacity
+  var capacityRef = ref(firebase.db, firebasePath + '/configuration/serverAtCapacity')
+  set(capacityRef, atCapacity)
+  onDisconnect(capacityRef).remove()
+}
+
 function publishServerPresence () {
   var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
   set(serverUrlConfigRef, serverUrl)
@@ -121,6 +147,9 @@ function publishServerPresence () {
   // Auto-remove server report on Firebase disconnect
   var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
   onDisconnect(reportRef).remove()
+
+  // Publish initial capacity state
+  updateServerCapacityState()
 }
 
 node.on('connect', function () {
@@ -140,7 +169,14 @@ node.on('disconnect', function () {
   // Remove server report
   var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
   remove(reportRef)
+  // Remove capacity state
+  var capacityRef = ref(firebase.db, firebasePath + '/configuration/serverAtCapacity')
+  remove(capacityRef)
 })
+
+// Update capacity state on downstream changes
+node.on('downstreamConnect', updateServerCapacityState)
+node.on('downstreamDisconnect', updateServerCapacityState)
 
 
 wss.on('connection', function (ws) {

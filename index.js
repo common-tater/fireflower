@@ -275,16 +275,21 @@ Node.prototype._onconfig = function (snapshot) {
     this._serverInfo = null
   }
 
-  // Root reduces K to 1 when the server is online — peers should connect
+  // Track server capacity state
+  this._serverAtCapacity = !!(data && data.serverAtCapacity)
+
+  // Root reduces K to 0 when the server is online — peers should connect
   // through the relay server, not consume root's bandwidth directly.
   // The server gets a free slot (doesn't count toward K), so root ends up
-  // with at most 1 regular peer + 1 server child.
+  // with just the server child. If server reaches capacity, revert K to
+  // allow P2P connections directly to root for graceful degradation.
   // Track the user-set K separately since deepMerge overwrites opts.K on
   // every config change.
   if (this.root) {
     var serverOnline = !!(data && data.serverUrl)
+    var serverAtCapacity = !!(data && data.serverAtCapacity)
     if (data && data.K != null) this._baseK = data.K
-    if (serverOnline) {
+    if (serverOnline && !serverAtCapacity) {
       this.K = 0
     } else if (this._baseK != null) {
       this.K = this._baseK
@@ -471,6 +476,15 @@ Node.prototype._onrequest = function (snapshot) {
   // (it only wants server). The "zombie" pending peer blocks root from responding
   // to legitimate upgrade requests. The connected count cap above is the real gate.
 
+  // Server capacity check: if this is the relay server and serverCapacity is set,
+  // stop responding to new requests when at capacity. This prevents server overload.
+  if (this.isServer && this.opts.serverCapacity) {
+    if (connectedCount >= this.opts.serverCapacity) {
+      this._log('SKIP request ' + requestId.slice(-5) + ': server at capacity (' + connectedCount + '/' + this.opts.serverCapacity + ' connected)')
+      return
+    }
+  }
+
   // responders may accidentally recreate requests
   // these won't have an id though and can be removed
   if (!peerId) {
@@ -638,7 +652,10 @@ Node.prototype._reviewResponses = function () {
     var c = candidates[j]
     if (c.transport === 'server') {
       this._serverInfo = { id: c.id, serverUrl: c.serverUrl }
-      serverCandidates.push(c)
+      // Skip server candidates if server is at capacity (unless serverOnly mode)
+      if (!this._serverAtCapacity || this.serverOnly) {
+        serverCandidates.push(c)
+      }
     } else {
       // For P2P: skip if upstream also responded (prefer the higher node)
       if (candidates[c.upstream]) continue
@@ -664,11 +681,18 @@ Node.prototype._reviewResponses = function () {
 
   console.log('[' + ts() + '] [fireflower] _reviewResponses', this.id.slice(-5), 'p2pRoots=' + p2pRoots.length, 'p2pCandidates=' + p2pCandidates.length, 'serverCandidates=' + serverCandidates.length, 'serverOnly=' + this.serverOnly, 'serverFirst=' + this.serverFirst)
 
+  // Edge case: serverOnly mode but server is at capacity. Fall back to P2P to prevent getting stuck.
+  var effectiveServerOnly = this.serverOnly
+  if (this.serverOnly && this._serverAtCapacity && serverCandidates.length === 0 && (p2pRoots.length > 0 || p2pCandidates.length > 0)) {
+    console.log('[' + ts() + '] [fireflower] Server at capacity, falling back to P2P despite serverOnly mode', this.id.slice(-5))
+    effectiveServerOnly = false
+  }
+
   // Server-first: when enabled and a server candidate exists, prefer it over
   // P2P root for instant data. The P2P upgrade timer handles switching later.
   // This must be checked BEFORE the P2P root acceptance — otherwise root's
   // response (which has no upstream) always wins and server-first never fires.
-  if (this.serverFirst && !this.serverOnly && serverCandidates.length) {
+  if (this.serverFirst && !effectiveServerOnly && serverCandidates.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
     this._log('accepting server-first response from ' + serverCandidates[0].id.slice(-5))
     debug(this.id + ' accepting server-first candidate response')
@@ -678,7 +702,7 @@ Node.prototype._reviewResponses = function () {
   }
 
   // Accept P2P root (unless serverOnly mode)
-  if (!this.serverOnly && p2pRoots.length) {
+  if (!effectiveServerOnly && p2pRoots.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
     debug(this.id + ' accepting P2P root response')
     this._acceptResponse(p2pRoots[0])
@@ -686,7 +710,7 @@ Node.prototype._reviewResponses = function () {
     return
   }
 
-  if (!this.serverOnly && p2pCandidates.length) {
+  if (!effectiveServerOnly && p2pCandidates.length) {
     firebase.off(this._responsesRef, 'child_added', this._onresponse)
     debug(this.id + ' accepting P2P candidate response')
     this._acceptResponse(p2pCandidates[0])
