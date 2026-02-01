@@ -46,6 +46,10 @@ function GraphView (path, root) {
       if (self.nodes[peer.id]) return
       if (self.serverNode && self.serverNode.serverId === peer.id) return
 
+      // The relay server peer is tagged _isServerPeer in _onrequest —
+      // skip it here, _updateServerNode handles the green SERVER element.
+      if (peer._isServerPeer) return
+
       // Check Firebase reports directly — the serverNode element may not
       // have the serverId set yet (still in "connecting..." state)
       if (self._serverReports) {
