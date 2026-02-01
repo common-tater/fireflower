@@ -191,6 +191,12 @@ Requests now include `serverOnly: this.serverOnly` in the request data. In `_onr
 ### Stale downstream entry blocks relay from responding to serverOnly requests
 When the relay responds to a node's upgrade request, it creates a downstream entry with `didConnect: true`. If the node chose a different parent (e.g., root accepted faster), the relay's downstream entry becomes a zombie — ICE completed but the node uses a different upstream. When the node later publishes a `serverOnly` request (force-server switch), the relay's `_onrequest` sees `this.downstream[peerId]` exists with `didConnect: true` and silently returns (line 484: "already connected, must be upgrade request — skip it"). But this is a brand new request, not an upgrade. Fix: when `request.serverOnly && this.isServer`, close the stale downstream entry and respond to the new request. The `didConnect` skip is still correct for non-serverOnly requests (actual upgrade requests from connected children).
 
+### Direct server reconnect bypasses Firebase signaling
+When a node's P2P upstream dies and the node has cached `_serverInfo` (from a previous server-first connection), `_connectToServerDirect()` connects to the relay server's WebSocket immediately — no Firebase request/response round-trip needed. This shaves seconds off reconnection for orphaned nodes. The method creates a `ServerTransport` directly, and on success sets it as primary upstream with mask/heartbeat wiring, then starts the P2P upgrade timer. On failure or timeout, it falls back to `this.connect()` (normal Firebase path). The fast path triggers in `_onupstreamDisconnect` when: `peer.didConnect && _serverInfo && serverFirst && !_serverAtCapacity && !isServer && !root`.
+
+### Relay server accepts cold WebSocket connections
+When `_connectToServerDirect` connects to the relay server, there's no pending `ServerPeerAdapter` (normally created during Firebase request/response). The relay server handles this by creating an adapter on the fly when a WebSocket arrives with no pending adapter and `node.state === 'connected'`. It wires the adapter into `node.downstream`, creates the notifications channel, and triggers `_ondownstreamConnect` — the same flow as a normal Firebase-signaled connection. If `node.state !== 'connected'`, the connection is rejected (server is shutting down or not ready).
+
 ### serverOnly race condition: config change arrives after server disconnect
 When force-server is toggled OFF and the server is disabled, two things happen: (1) the relay server shuts down, closing WebSocket connections instantly, and (2) the Firebase config change propagates to all nodes. The WebSocket close is immediate but the Firebase config takes a network round-trip. A node connected via server detects the disconnect first and calls `_dorequest` with stale `serverOnly=true`. Root sees the request but skips it (`request.serverOnly && !this.isServer`). Seconds later the config change arrives, setting `this.serverOnly = false`, but `_onconfig` only handled this transition when `state === 'connected'` and `transport === 'server'` — not when in `requesting` state. Fix: add a branch in `_onconfig` that detects `wasServerOnly && !this.serverOnly && this.state === 'requesting'` and restarts the request with the corrected `serverOnly=false` flag. The old request (with `serverOnly=true`) is removed from Firebase and a new one is published that P2P nodes can respond to.
 
@@ -270,11 +276,11 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 10. Large Tree (K=3) — 12 nodes
 11. WebSocket Reconnection — clients detect server disconnect, fall back to P2P
 12. Disconnect All & Reconnect — remove and re-add nodes
-13. Server Fallback on Mid-Tree Disconnect — orphans fall back to server, then upgrade to P2P
+13. Server Fallback on Mid-Tree Disconnect — orphans fall back to server, most upgrade to P2P (at most 1 stays on server)
 14. Heartbeat Pause → Fallback → Resume → Recovery
 15. Server Info Cached After Server Seen
 16. Rapid Disconnects with Server Fallback
-17. Server-First Connection + P2P Upgrade — nodes connect via server first, then upgrade to P2P
+17. Server-First Connection + P2P Upgrade — nodes connect via server first, most upgrade to P2P (at most 1 stays on server as relay sub-tree root)
 18. Force Server Downgrade (P2P → Server) — toggle serverOnly ON, all P2P nodes switch to server
 19. Force Server ON then OFF (roundtrip) — P2P → server → P2P
 20. Simultaneous Server→P2P Upgrades — many nodes upgrade at once, no circles or stuck nodes
@@ -283,4 +289,5 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 23. Server-First Prefers Server, Stays When No Upgrade Target — verifies server-first picks server candidate over root, and peer stays on server when only upgrade target is root (preserves broadcaster bandwidth)
 24. Upgrade Skips Root — server-connected nodes upgrade to each other, not to root
 25. K Limit Enforced Under Rapid Connections — 8 rapid nodes, no node exceeds K=2 connected children
-26. Server-First Reconnection After Mid-Tree Disconnect — orphans use server-first, then upgrade to P2P
+26. Server-First Reconnection After Mid-Tree Disconnect — orphans use server-first (direct or Firebase), most upgrade to P2P (at most 1 stays on server)
+27. Server Capacity Limit — excess nodes beyond serverCapacity use P2P instead of server
