@@ -67,7 +67,7 @@ async function getNodeStates (page) {
         hasServerFallback: !!root.model._serverFallback,
         hasServerInfo: !!root.model._serverInfo,
         ancestors: root.model._ancestors || [],
-        debugLog: (root.model._debugLog || []).slice(-10)
+        debugLog: (root.model._debugLog || []).slice(-20)
       }
     }
 
@@ -93,7 +93,7 @@ async function getNodeStates (page) {
         hasServerFallback: !!node.model._serverFallback,
         hasServerInfo: !!node.model._serverInfo,
         ancestors: node.model._ancestors || [],
-        debugLog: (node.model._debugLog || []).slice(-10)
+        debugLog: (node.model._debugLog || []).slice(-20)
       }
     }
     return result
