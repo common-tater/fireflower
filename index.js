@@ -139,6 +139,8 @@ Object.defineProperty(Node.prototype, 'K', {
 
     var n = 0
     for (var i in this.downstream) {
+      // On root, the relay server gets a free slot — never prune it
+      if (this.root && this.downstream[i]._isServerPeer) continue
       if (++n > this.opts.K) {
         this.downstream[i].close()
       }
@@ -440,7 +442,7 @@ Node.prototype._onrequest = function (snapshot) {
   var isServerRequest = request.isServer
   var connectedCount = 0
   for (var did in this.downstream) {
-    if (this.downstream[did].didConnect) connectedCount++
+    if (this.downstream[did].didConnect && !(this.root && this.downstream[did]._isServerPeer)) connectedCount++
   }
   if (connectedCount >= this.opts.K && !(this.root && isServerRequest)) {
     this._log('SKIP request ' + requestId.slice(-5) + ': at K capacity (' + connectedCount + '/' + this.opts.K + ' connected)')
@@ -523,7 +525,10 @@ Node.prototype._onrequest = function (snapshot) {
   this._respondedRequests[requestId] = Date.now()
 
   var transportOpts = this.isServer ? { transport: 'server', serverUrl: this.serverUrl } : null
-  this._connectToPeer(true, peerId, requestId, responseRef, transportOpts)
+  var peer = this._connectToPeer(true, peerId, requestId, responseRef, transportOpts)
+  // Tag server peers so root can exclude them from K counting —
+  // the relay server gets a "free" slot on root, not consuming K capacity
+  if (isServerRequest) peer._isServerPeer = true
 
   // publish response
   var response = {
@@ -1352,19 +1357,22 @@ Node.prototype._ondownstreamConnect = function (peer) {
   // stop responding to requests if connected peers >= K
   // and close excess peers if connected > K (race: multiple pending peers
   // completed ICE simultaneously, each passing the _onrequest gate while pending)
+  // On root, the relay server (_isServerPeer) doesn't count toward K — it gets a free slot.
   var connectedPeers = []
   for (var cid in this.downstream) {
-    if (this.downstream[cid].didConnect) connectedPeers.push(this.downstream[cid])
+    var ds = this.downstream[cid]
+    if (ds.didConnect && !(this.root && ds._isServerPeer)) connectedPeers.push(ds)
   }
   var connected = connectedPeers.length
   var childIds = connectedPeers.map(function (p) { return p.id.slice(-5) })
   console.log('[' + ts() + '] [fireflower] downstream connected', this.id.slice(-5), '<-', peer.id.slice(-5), 'connected:', connected + '/' + this.opts.K, connected >= this.opts.K ? '(FULL children: ' + childIds.join(',') + ')' : '')
-  if (connected >= this.opts.K) {
+  if (connected >= this.opts.K && !this.root) {
     firebase.off(this._requestsRef, 'child_added', this._onrequest)
   }
-  if (connected > this.opts.K) {
+  if (connected > this.opts.K && !peer._isServerPeer) {
     // Close excess — the newest arrival (this peer) is the one over capacity,
-    // so close it to preserve existing children's connections
+    // so close it to preserve existing children's connections.
+    // Never close the server peer — it always gets root's free slot.
     console.log('[' + ts() + '] [fireflower] OVER CAPACITY', this.id.slice(-5), connected + '/' + this.opts.K, '— closing excess peer', peer.id.slice(-5))
     peer.close()
     return
@@ -1628,14 +1636,18 @@ Node.prototype._reviewRequests = function () {
   // Use connected count (not total) to match _ondownstreamConnect's stop check.
   // Pending peers (ICE in progress) sit in this.downstream but shouldn't block
   // the node from accepting new requests — _onrequest has its own capacity checks.
+  // On root, the relay server (_isServerPeer) doesn't count toward K.
   var connected = 0
   var pending = 0
   for (var id in this.downstream) {
-    if (this.downstream[id].didConnect) connected++
-    else pending++
+    var ds = this.downstream[id]
+    if (ds.didConnect && !(this.root && ds._isServerPeer)) connected++
+    else if (!ds.didConnect) pending++
   }
-  if (connected < this.opts.K) {
-    console.log('[' + ts() + '] [fireflower] _reviewRequests SUBSCRIBING', this.id.slice(-5), 'connected=' + connected + '/' + this.opts.K, 'pending=' + pending)
+  if (connected < this.opts.K || this.root) {
+    // Root always stays subscribed even when full — it must see server requests
+    // which bypass the K check in _onrequest. Non-root nodes unsubscribe at capacity.
+    console.log('[' + ts() + '] [fireflower] _reviewRequests SUBSCRIBING', this.id.slice(-5), 'connected=' + connected + '/' + this.opts.K, 'pending=' + pending, this.root && connected >= this.opts.K ? '(root always listens)' : '')
     firebase.off(this._requestsRef, 'child_added', this._onrequest)
     firebase.onChildAdded(this._requestsRef, this._onrequest)
   } else {

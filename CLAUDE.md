@@ -104,6 +104,12 @@ When `serverFirst` is active, `_onresponse` resets the 250ms batch timer on each
 ### Relay server needs longer batching window to connect to root
 The relay server has `serverFirst: false` (it IS the server), so `_onresponse` uses the fast 100ms batching window. Root and level-1 nodes both see the server's request via Firebase. If a level-1 node's response arrives within 100ms but root's response takes longer, `_reviewResponses` fires with only `p2pCandidates` (no `p2pRoots`) and accepts the level-1 node instead of root. Fix: when `this.isServer`, use a 500ms batching window. The relay server only connects once at startup (or on reconnect), so the extra delay is negligible. This ensures root's response arrives before the review, and the priority logic (`p2pRoots` before `p2pCandidates`) correctly selects root.
 
+### Root must always stay subscribed to requests (for server)
+When root reaches K capacity, `_ondownstreamConnect` unsubscribes from Firebase requests. But the relay server's `isServer` exception in `_onrequest` (bypasses K check) only works if root receives the request. If root already unsubscribed, it never sees the server's request, and the relay server connects to a non-root node instead. Fix: root never unsubscribes from requests — `_ondownstreamConnect` and `_reviewRequests` both skip the unsubscribe/full check when `this.root`. The per-request K check in `_onrequest` still rejects regular nodes at capacity, so root doesn't accept unlimited children.
+
+### Relay server gets a free slot on root (doesn't count toward K)
+The relay server peer is tagged with `_isServerPeer = true` when root responds to its `isServer` request. All K-counting code on root (`_onrequest`, `_ondownstreamConnect`, `_reviewRequests`, K setter pruning) excludes `_isServerPeer` peers. This means root with K=2 can have: relay server + 2 regular children. Without this, the server consumes a K slot, and with K=1, root could only have the server (no regular children at all). The free slot only applies on root — non-root nodes count the server normally.
+
 ### Force-server downgrade
 When `serverOnly` transitions from false to true in `_onconfig`, existing P2P nodes must actively switch to server transport. The `_switchToServer` method closes the P2P upstream, sets state to `'requesting'`, and calls `_dorequest()`. Since `serverOnly` is now true, `_reviewResponses` only accepts server responses. Root is exempt from `serverOnly` (it IS the broadcaster): `this.serverOnly = (this.isServer || this.root) ? false : ...`.
 
