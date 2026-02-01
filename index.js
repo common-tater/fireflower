@@ -275,6 +275,22 @@ Node.prototype._onconfig = function (snapshot) {
     this._serverInfo = null
   }
 
+  // Root reduces K to 1 when the server is online — peers should connect
+  // through the relay server, not consume root's bandwidth directly.
+  // The server gets a free slot (doesn't count toward K), so root ends up
+  // with at most 1 regular peer + 1 server child.
+  // Track the user-set K separately since deepMerge overwrites opts.K on
+  // every config change.
+  if (this.root) {
+    var serverOnline = !!(data && data.serverUrl)
+    if (data && data.K != null) this._baseK = data.K
+    if (serverOnline) {
+      this.K = 0
+    } else if (this._baseK != null) {
+      this.K = this._baseK
+    }
+  }
+
   debug(this.id + ' config changed ' + JSON.stringify(data))
 
   // If serverOnly was just turned off while connected via server, start upgrade timer
