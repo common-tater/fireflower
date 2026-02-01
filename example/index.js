@@ -142,10 +142,13 @@ get(treeRef).then(function(snapshot) {
 })
 
 function onkchanged () {
+  var k = parseInt(knumber.value, 10)
   if (window.graph) {
-    window.graph.K = parseInt(knumber.value, 10)
+    window.graph.K = k
     window.graph.render()
   }
+  var kRef = ref(firebase.db, treePath + '/configuration/K')
+  set(kRef, k)
 }
 
 function onServerCapacityChanged () {

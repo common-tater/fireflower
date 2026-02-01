@@ -260,7 +260,10 @@ Node.prototype._log = function (msg) {
 
 Node.prototype._onconfig = function (snapshot) {
   var data = snapshot.val()
+  // Preserve the relay server's own K — Firebase config K is for regular nodes
+  var serverK = this.isServer ? this.opts.K : null
   if (data) deepMerge(this.opts, data)
+  if (this.isServer && serverK != null) this.opts.K = serverK
 
   var wasServerOnly = this.serverOnly
   // Server node should never use server transport (it IS the server)
