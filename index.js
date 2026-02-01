@@ -388,22 +388,15 @@ Node.prototype._onrequest = function (snapshot) {
   var request = snapshot.val()
   var peerId = request.id
 
-  if (this.root) {
-    console.log('[' + ts() + '] [fireflower] root SAW request', (requestId || '').slice(-5), 'from', (peerId || '').slice(-5), 'state=' + this.state)
-  }
-  if (this.isServer) {
-    console.log('[' + ts() + '] [fireflower] server SAW request', (requestId || '').slice(-5), 'from', (peerId || '').slice(-5), 'state=' + this.state, 'serverOnly=' + (request.serverOnly || false))
-  }
-
   if (this.state !== 'connected') {
-    console.log('[' + ts() + '] [fireflower] SKIP request', (requestId || '').slice(-5), 'from', (peerId || '').slice(-5), this.id.slice(-5) + ': not connected (state=' + this.state + ')')
+    this._log('SKIP request ' + (requestId || '').slice(-5) + ' from ' + (peerId || '').slice(-5) + ': not connected (state=' + this.state + ')')
     return
   }
 
   // Ignore stale requests (older than 60s) — prevents ghost nodes from occupying capacity
   var requestTime = request.t
   if (requestTime && Date.now() - requestTime > 60000) {
-    console.log('[' + ts() + '] [fireflower] SKIP request', (requestId || '').slice(-5), this.id.slice(-5) + ': stale (' + Math.round((Date.now() - requestTime) / 1000) + 's old)')
+    this._log('SKIP request ' + (requestId || '').slice(-5) + ': stale (' + Math.round((Date.now() - requestTime) / 1000) + 's old)')
     firebase.remove(snapshot.ref)
     return
   }
@@ -440,7 +433,7 @@ Node.prototype._onrequest = function (snapshot) {
     if (this.downstream[did].didConnect) connectedCount++
   }
   if (connectedCount >= this.opts.K && !(this.root && isServerRequest)) {
-    console.log('[' + ts() + '] [fireflower] SKIP request', requestId.slice(-5), this.id.slice(-5) + ': at K capacity (' + connectedCount + '/' + this.opts.K + ' connected)')
+    this._log('SKIP request ' + requestId.slice(-5) + ': at K capacity (' + connectedCount + '/' + this.opts.K + ' connected)')
     return
   }
   // Note: we intentionally do NOT cap pending (in-progress ICE) connections.
@@ -542,7 +535,7 @@ Node.prototype._onrequest = function (snapshot) {
 
 Node.prototype._onresponse = function (snapshot) {
   var resp = snapshot.val()
-  console.log('[' + ts() + '] [fireflower] _onresponse', this.id.slice(-5), 'got response from', (snapshot.key || '').slice(-5), 'transport=' + (resp && resp.transport || 'p2p'), 'state=' + this.state)
+  this._log('response from ' + (snapshot.key || '').slice(-5) + ' transport=' + (resp && resp.transport || 'p2p'))
   if (this.state !== 'requesting') {
     return
   }
@@ -1578,7 +1571,7 @@ Node.prototype._onreportNeeded = function () {
 
 Node.prototype._reviewRequests = function () {
   if (this.state !== 'connected') {
-    console.log('[' + ts() + '] [fireflower] _reviewRequests SKIP', this.id.slice(-5), 'state=' + this.state)
+    this._log('_reviewRequests SKIP state=' + this.state)
     return
   }
 
