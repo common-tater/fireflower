@@ -659,15 +659,15 @@ async function scenario20 (page) {
 
   // Wait for ALL nodes to upgrade to P2P — this is where circles/stuck nodes would happen
   // The 8s upgrade interval means all nodes try to upgrade around the same time
+  // With root K=0 when server is online, one node may stay on server as the relay's direct child
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
     if (ids.length < 8) return false
-    return ids.every(function (id) {
-      return states[id].state === 'connected' && states[id].transport === 'p2p'
-    })
-  }, 'all 8 nodes upgrade to P2P without getting stuck', 60000)
+    var sCount = ids.filter(function (id) { return states[id].transport === 'server' }).length
+    return ids.every(function (id) { return states[id].state === 'connected' }) && sCount <= 1
+  }, 'all 8 nodes upgrade to P2P without getting stuck (1 may stay on server)', 60000)
 
-  h.log('  All 8 nodes successfully upgraded from server to P2P (no stuck nodes)')
+  h.log('  All 8 nodes connected after upgrade (at most 1 on server)')
 
   // Verify no circles: walk upstream from each node, should always reach root
   var finalStates = await h.getNodeStates(page)
@@ -691,15 +691,15 @@ async function scenario21 (page) {
   h.log('  All 6 nodes connected (server-first)')
 
   // Wait for ALL nodes to upgrade to P2P without forming circles
+  // With root K=0 when server is online, one node may stay on server as the relay's direct child
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
     if (ids.length < 6) return false
-    return ids.every(function (id) {
-      return states[id].state === 'connected' && states[id].transport === 'p2p'
-    })
-  }, 'all 6 nodes upgrade to P2P without circles', 60000)
+    var sCount = ids.filter(function (id) { return states[id].transport === 'server' }).length
+    return ids.every(function (id) { return states[id].state === 'connected' }) && sCount <= 1
+  }, 'all 6 nodes upgrade to P2P without circles (1 may stay on server)', 60000)
 
-  h.log('  All nodes upgraded to P2P')
+  h.log('  All nodes upgraded (at most 1 on server)')
 
   // Check for N-node circles by walking upstream chains
   var states = await h.getNodeStates(page)
