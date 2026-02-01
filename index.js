@@ -350,6 +350,7 @@ Node.prototype._doconnect = function () {
 
 Node.prototype._dorequest = function () {
   this._log('dorequest state=' + this.state)
+  this._serverFirstWaitCount = 0
   console.log('[' + ts() + '] [fireflower] _dorequest', this.id.slice(-5), 'state=' + this.state, 'transport=' + this._transport, 'serverFirst=' + this.serverFirst, 'serverOnly=' + this.serverOnly)
   debug(this.id + ' requesting connection')
   var self = this
@@ -630,6 +631,21 @@ Node.prototype._reviewResponses = function () {
     this._acceptResponse(serverCandidates[0])
     delete this._responses
     return
+  }
+
+  // Server-first wait: if we have a P2P root but no server candidate yet,
+  // wait a few more review cycles to give the relay server time to respond.
+  // Root usually responds faster than the server, so without this delay,
+  // the node would accept root before the server's response arrives.
+  if (this.serverFirst && !this.serverOnly && p2pRoots.length && !serverCandidates.length) {
+    if (!this._serverFirstWaitCount) this._serverFirstWaitCount = 0
+    this._serverFirstWaitCount++
+    if (this._serverFirstWaitCount < 4) {  // Wait up to ~1s (4 x 250ms)
+      this._responseReviewInterval = this._setTimeout(this._reviewResponses, 250)
+      return
+    }
+    // Gave up waiting for server — fall through to accept P2P root
+    this._serverFirstWaitCount = 0
   }
 
   // Accept P2P root (unless serverOnly mode)
