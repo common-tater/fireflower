@@ -32,6 +32,7 @@ function ts () {
 //     Too high → slow detection, defeating the purpose.
 var HEARTBEAT_INTERVAL = 2000  // ms — parent sends every 2s
 var HEARTBEAT_TIMEOUT = 4000   // ms — child considers parent dead after 4s of silence
+var BACKPRESSURE_THRESHOLD = 65536  // bytes — skip sends when bufferedAmount exceeds this
 
 function deepMerge (target, source) {
   for (var key in source) {
@@ -1341,14 +1342,16 @@ Node.prototype._ondownstreamConnect = function (peer) {
   }
 
   // make sure downstream has the most up to date mask (including ancestor chain)
-  try {
-    peer.notifications.send(JSON.stringify({
-      mask: this._mask,
-      level: this._level || 0,
-      ancestors: (this._ancestors || []).concat([this.id])
-    }))
-  } catch (err) {
-    console.warn(this.id + ' failed to send initial mask update to ' + peer.id, err)
+  if (!peer.notifications.bufferedAmount || peer.notifications.bufferedAmount < BACKPRESSURE_THRESHOLD) {
+    try {
+      peer.notifications.send(JSON.stringify({
+        mask: this._mask,
+        level: this._level || 0,
+        ancestors: (this._ancestors || []).concat([this.id])
+      }))
+    } catch (err) {
+      console.warn(this.id + ' failed to send initial mask update to ' + peer.id, err)
+    }
   }
 
   // start sending heartbeat to this child
@@ -1362,9 +1365,11 @@ Node.prototype._ondownstreamConnect = function (peer) {
       return
     }
     if (peer.notifications && peer.notifications.readyState === 'open') {
-      try {
-        peer.notifications.send(JSON.stringify({ type: 'heartbeat', t: Date.now() }))
-      } catch (err) {}
+      if (!peer.notifications.bufferedAmount || peer.notifications.bufferedAmount < BACKPRESSURE_THRESHOLD) {
+        try {
+          peer.notifications.send(JSON.stringify({ type: 'heartbeat', t: Date.now() }))
+        } catch (err) {}
+      }
     } else if (peer.didConnect && peer.notifications &&
                (peer.notifications.readyState === 'closed' || peer.notifications.readyState === 'closing')) {
       clearInterval(peer._heartbeatInterval)
@@ -1475,10 +1480,12 @@ Node.prototype._updateMask = function (data) {
   for (var i in this.downstream) {
     var notifications = this.downstream[i].notifications
     if (notifications && notifications.readyState === 'open') {
-      try {
-        notifications.send(JSON.stringify(relayData))
-      } catch (err) {
-        console.warn(this.id + ' failed to relay mask update downstream', err)
+      if (!notifications.bufferedAmount || notifications.bufferedAmount < BACKPRESSURE_THRESHOLD) {
+        try {
+          notifications.send(JSON.stringify(relayData))
+        } catch (err) {
+          console.warn(this.id + ' failed to relay mask update downstream', err)
+        }
       }
     }
   }

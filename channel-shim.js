@@ -16,6 +16,12 @@ function ChannelShim (label, transport) {
   this._transport = transport
 }
 
+Object.defineProperty(ChannelShim.prototype, 'bufferedAmount', {
+  get: function () {
+    return this._transport && this._transport._ws ? this._transport._ws.bufferedAmount || 0 : 0
+  }
+})
+
 ChannelShim.prototype.send = function (data) {
   if (this.readyState !== 'open') {
     throw new Error('ChannelShim: cannot send on closed channel')

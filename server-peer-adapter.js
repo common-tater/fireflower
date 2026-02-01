@@ -103,6 +103,7 @@ ServerPeerAdapter.prototype._handleMessage = function (data) {
 
 ServerPeerAdapter.prototype._send = function (data) {
   if (this._closed || !this._ws || this._ws.readyState !== 1) return
+  if (this._ws.bufferedAmount > 65536) return
   try {
     this._ws.send(JSON.stringify(data))
   } catch (err) {
