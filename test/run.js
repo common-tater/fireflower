@@ -36,7 +36,7 @@ var scenarios = [
   { name: 'Simultaneous Server→P2P Upgrades (no stuck nodes)', fn: scenario20 },
   { name: 'Transitive Circle Prevention During Upgrades', fn: scenario21 },
   { name: 'Minimal Server→P2P Switch (1 peer)', fn: scenario22 },
-  { name: 'Server-First Prefers Server Over P2P Root', fn: scenario23 },
+  { name: 'Server-First Prefers Server, Stays When No Upgrade Target', fn: scenario23 },
   { name: 'Upgrade Skips Root (peers connect to each other)', fn: scenario24 }
 ]
 
@@ -791,6 +791,10 @@ async function scenario23 (page) {
   // Server-first must prefer server candidate over P2P root response.
   // Previously, _reviewResponses accepted P2P root before checking for
   // server candidates, so serverFirst=true had no effect when root responded.
+  //
+  // With only 1 peer + root + relay, the peer should stay on server because
+  // _attemptUpgrade skips root (root's bandwidth is reserved for broadcasting).
+  // The peer correctly remains on server transport — no upgrade target exists.
   await h.setK(page, 2)
   await h.setServerEnabled(page, true)
   await h.wait(2000)
@@ -814,24 +818,17 @@ async function scenario23 (page) {
 
   h.log('  Peer correctly connected via server-first (not P2P root)')
 
-  // Now wait for the P2P upgrade to happen
-  await h.waitForAll(page, function (states) {
-    var s = states[peerId]
-    if (!s) return false
-    return s.state === 'connected' && s.transport === 'p2p'
-  }, 'peer upgrades from server to P2P', 20000)
-
-  h.log('  Peer upgraded to P2P')
-
-  // Verify stable
-  await h.wait(2000)
+  // With only 1 peer, upgrade should NOT happen — the only P2P target is root,
+  // and _attemptUpgrade skips root to preserve broadcaster bandwidth.
+  // Wait for one upgrade cycle + jitter to confirm it stays on server.
+  await h.wait(7000)
   var finalStates = await h.getNodeStates(page)
   assert(finalStates[peerId].state === 'connected',
-    'Peer should still be connected after upgrade')
-  assert(finalStates[peerId].transport === 'p2p',
-    'Peer should be on P2P after upgrade')
+    'Peer should still be connected')
+  assert(finalStates[peerId].transport === 'server',
+    'Peer should stay on server (no non-root upgrade target)')
 
-  h.log('  Server-first -> P2P upgrade completed and stable')
+  h.log('  Peer correctly stays on server (upgrade skips root)')
 }
 
 async function scenario24 (page) {

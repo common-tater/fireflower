@@ -108,8 +108,9 @@ function Node (path, opts) {
   this.K = this.K || 0
 
   // use external setTimeout if provided
-  this._setTimeout = this.opts.setTimeout || setTimeout
-  this._clearTimeout = this.opts.clearTimeout || clearTimeout
+  var g = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : global)
+  this._setTimeout = this.opts.setTimeout || setTimeout.bind(g)
+  this._clearTimeout = this.opts.clearTimeout || clearTimeout.bind(g)
 
   // bind callbacks
   this._onconfig = this._onconfig.bind(this)
@@ -554,7 +555,12 @@ Node.prototype._onresponse = function (snapshot) {
   } else {
     this._responses = [ snapshot ]
     this._clearTimeout(this._responseReviewInterval)
-    this._responseReviewInterval = this._setTimeout(this._reviewResponses, 100)
+    // Use longer window when serverFirst is active — server responses arrive
+    // after P2P root because WebSocket setup takes more time than direct
+    // Firebase signaling. Without this, the 100ms window closes before the
+    // server candidate arrives and serverFirst never fires.
+    var delay = (this.serverFirst && !this.serverOnly) ? 250 : 100
+    this._responseReviewInterval = this._setTimeout(this._reviewResponses, delay)
   }
 }
 

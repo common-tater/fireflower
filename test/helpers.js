@@ -66,11 +66,12 @@ async function getNodeStates (page) {
       }
     }
 
-    // All other nodes
+    // All other nodes (skip RemotePeerModel nodes from neighborhood visualization)
     for (var id in graph.nodes) {
       if (result[id]) continue // skip root
       var node = graph.nodes[id]
       if (!node || !node.model) continue
+      if (!node.model._debugLog) continue // skip RemotePeerModel (not a real fireflower node)
       result[id] = {
         id: id,
         state: node.model.state,

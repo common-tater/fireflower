@@ -24,9 +24,9 @@
     "dev": "npm run build && concurrently -k -n app,relay -c blue,green \"node example/server.js\" \"node relay-server.js\"",
     "dev:app": "npm run build && node example/server.js",
     "dev:relay": "node relay-server.js",
-    "dev:viz": "npm start --prefix ../fireflower-visualizer",
+    "dev:viz": "PORT=8081 npm start --prefix ../fireflower-visualizer",
     "dev:p2p": "npm run build && node example/server.js",
-    "dev:all": "npm run build && concurrently -k -n app,relay,viz -c blue,green,magenta \"node example/server.js\" \"node relay-server.js\" \"npm start --prefix ../fireflower-visualizer\"",
+    "dev:all": "npm run build && concurrently -k -n app,relay,viz -c blue,green,magenta \"node example/server.js\" \"node relay-server.js\" \"PORT=8081 npm start --prefix ../fireflower-visualizer\"",
     "test": "node test/run.js"
   },
   "repository": "https://github.com/common-tater/fireflower",

@@ -98,6 +98,9 @@ In `_reviewResponses`, root's response has no `upstream` field, so it goes into 
 ### Server-first connection design
 The `serverFirst` option (default: true) causes `_reviewResponses` to prefer server candidates over P2P when both are available. This gives nodes instant data through the relay server while P2P negotiation happens in the background via the upgrade timer. When no server is running, `serverCandidates.length` is 0 and the code falls through to the normal P2P path — P2P-only mode is completely unaffected. The `isServer` node always has `serverFirst: false` (it IS the server). Root also ignores it (root has no upstream).
 
+### Server-first needs longer response batching window
+When `serverFirst` is active, `_onresponse` uses a 250ms batching window instead of 100ms. Root's P2P response arrives faster than the relay server's response (Firebase signaling is faster than WebSocket setup). With a 100ms window, the review fires before the server candidate arrives, so `serverFirst` never sees a server option and falls through to accepting root's P2P response. The 250ms window gives the server response time to arrive. Non-serverFirst nodes still use the fast 100ms window.
+
 ### Force-server downgrade
 When `serverOnly` transitions from false to true in `_onconfig`, existing P2P nodes must actively switch to server transport. The `_switchToServer` method closes the P2P upstream, sets state to `'requesting'`, and calls `_dorequest()`. Since `serverOnly` is now true, `_reviewResponses` only accepts server responses. Root is exempt from `serverOnly` (it IS the broadcaster): `this.serverOnly = (this.isServer || this.root) ? false : ...`.
 
@@ -112,6 +115,9 @@ When many nodes connect via server around the same time, their P2P upgrade timer
 
 ### Initial heartbeat timeout prevents stuck children
 The heartbeat timeout (`_onheartbeat`) is started only when a heartbeat message is received. But the parent sends its first heartbeat after a 2s interval. If the parent dies before sending any heartbeat, the child never starts a timeout and sits forever with `state: 'connected'` but a dead upstream. Fix: start an initial heartbeat timeout in `_onupstreamConnect` for P2P connections. The first actual heartbeat resets this timeout via `_onheartbeat`.
+
+### setTimeout/clearTimeout must be bound to global context
+In browsers, `setTimeout` and `clearTimeout` throw `Illegal invocation` when called without the correct `this` context (e.g., `window`). The Node class stores them as `this._setTimeout` / `this._clearTimeout`, which strips the original binding. Use `setTimeout.bind(globalThis)` (with fallback to `window` or `global`) so it works in both browsers and Node.js. Do NOT use bare `setTimeout` without binding — it works in Node.js but fails in Chrome.
 
 ### Do not enable debug module in production
 The `debug` npm module (`require('debug')('fireflower')`) is used throughout `index.js`. Setting `localStorage.debug = 'fireflower'` enables all debug output to console. With many nodes and frequent events (config changes, requests, mask updates), this generates hundreds of thousands of log lines. The example app should NOT set `localStorage.debug` — it floods the browser console and the on-screen debug overlay.
@@ -204,7 +210,7 @@ npm run dev:viz    # 3D visualizer only — requires ../fireflower-visualizer
 ```
 
 ### Configurable Firebase path
-The example app reads `?path=<name>` from the URL query string, defaulting to `'tree'`. This enables multiple independent trees on the same Firebase database — each path gets its own requests, reports, configuration, and node space. The 3D visualizer also supports path via URL pathname (e.g., `http://localhost:8081/my-path`).
+The example app reads `?path=<name>` from the URL query string, defaulting to `'tree'`. This enables multiple independent trees on the same Firebase database — each path gets its own requests, reports, configuration, and node space. The 3D visualizer supports path via URL pathname (e.g., `http://localhost:8081/test-tree`), defaulting to `tree`.
 
 ## Testing
 
@@ -253,5 +259,5 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 20. Simultaneous Server→P2P Upgrades — many nodes upgrade at once, no circles or stuck nodes
 21. Transitive Circle Prevention During Upgrades — verify ancestor chain prevents N-node circles
 22. Minimal Server→P2P Switch — 1 peer on forced server, server disabled, peer reconnects to root via P2P
-23. Server-First Prefers Server Over P2P Root — verifies server-first actually picks server candidate when root also responds
+23. Server-First Prefers Server, Stays When No Upgrade Target — verifies server-first picks server candidate over root, and peer stays on server when only upgrade target is root (preserves broadcaster bandwidth)
 24. Upgrade Skips Root — server-connected nodes upgrade to each other, not to root
