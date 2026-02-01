@@ -568,6 +568,12 @@ Node.prototype._onresponse = function (snapshot) {
     var elapsed = Date.now() - this._responseWindowStart
     var remaining = 1500 - elapsed
     delay = remaining > 250 ? 250 : (remaining > 50 ? remaining : 50)
+  } else if (this.isServer) {
+    // Relay server needs a longer window to ensure root's response arrives.
+    // The server uses serverFirst=false (it IS the server) but must still
+    // prioritize connecting to root. Without this, a level-1 node's response
+    // can arrive within 100ms and be accepted before root responds.
+    delay = 500
   } else {
     delay = 100
   }

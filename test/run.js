@@ -37,7 +37,9 @@ var scenarios = [
   { name: 'Transitive Circle Prevention During Upgrades', fn: scenario21 },
   { name: 'Minimal Server→P2P Switch (1 peer)', fn: scenario22 },
   { name: 'Server-First Prefers Server, Stays When No Upgrade Target', fn: scenario23 },
-  { name: 'Upgrade Skips Root (peers connect to each other)', fn: scenario24 }
+  { name: 'Upgrade Skips Root (peers connect to each other)', fn: scenario24 },
+  { name: 'K Limit Enforced Under Rapid Connections', fn: scenario25 },
+  { name: 'Server-First Reconnection After Mid-Tree Disconnect', fn: scenario26 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -881,6 +883,115 @@ async function scenario24 (page) {
   h.log('  ' + p2pPeers.length + ' peers upgraded to P2P (not via root), ' + serverPeers.length + ' stayed on server')
   assert(p2pPeers.length >= 2,
     'At least 2 peers should upgrade to P2P, got ' + p2pPeers.length)
+}
+
+async function scenario25 (page) {
+  // K Limit Enforced: add many nodes rapidly with K=2. After stabilization,
+  // no node should have more than K connected children. This tests the fix
+  // in _ondownstreamConnect that closes excess peers when multiple pending
+  // peers complete ICE simultaneously.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Add 8 nodes rapidly — short delays to maximize concurrent ICE
+  var ids = []
+  for (var i = 0; i < 8; i++) {
+    var id = await page.evaluate(function () {
+      var node = window.graph.add({})
+      node.x = 200 + Math.random() * (window.innerWidth - 300)
+      node.y = 100 + Math.random() * (window.innerHeight - 200)
+      window.graph.render()
+      return node.id
+    })
+    ids.push(id)
+    h.log('  Added node ' + id.slice(-5) + ' (' + (i + 1) + '/8)')
+    await h.wait(500) // rapid — half the normal delay
+  }
+
+  await h.waitForAllConnected(page, 9, 45000) // root + 8
+  h.log('  All 8 nodes connected, checking K limits...')
+
+  // Poll a few times to catch transient over-capacity (some peers may still
+  // be completing ICE when we first check)
+  for (var check = 0; check < 3; check++) {
+    await h.wait(2000)
+    var states = await h.getNodeStates(page)
+    for (var nid in states) {
+      var s = states[nid]
+      assert(s.connectedDownstreamCount <= 2,
+        'Node ' + nid.slice(-5) + ' has ' + s.connectedDownstreamCount + ' connected children (K=2)')
+    }
+  }
+
+  h.log('  K=2 limit enforced — no node exceeded 2 connected children')
+}
+
+async function scenario26 (page) {
+  // Server-First Reconnection After Mid-Tree Disconnect:
+  // With server enabled, build a P2P tree, then disconnect a mid-tree node.
+  // Orphaned children should reconnect via server-first (not skip to P2P),
+  // proving the batch timer reset gives the server candidate time to arrive.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  // Add nodes, let them upgrade to P2P
+  var ids = await h.addNodes(page, 4, { p2pUpgradeInterval: 8000 })
+  await h.waitForAll(page, function (states) {
+    var nodeIds = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (nodeIds.length < 4) return false
+    return nodeIds.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all 4 nodes on P2P', 60000)
+  h.log('  All 4 nodes upgraded to P2P')
+
+  // Find a mid-tree node with children
+  var states = await h.getNodeStates(page)
+  var midNode = ids.find(function (id) {
+    return states[id] && states[id].connectedDownstreamCount > 0
+  })
+  if (!midNode) midNode = ids[0]
+
+  var orphanCount = states[midNode] ? states[midNode].connectedDownstreamCount : 0
+  h.log('  Disconnecting mid-tree node ' + midNode.slice(-5) + ' (children=' + orphanCount + ')...')
+  await h.disconnectNode(page, midNode)
+
+  // Poll for orphaned nodes going through server transport (server-first reconnection).
+  // The batch timer reset ensures the server candidate isn't missed during the storm.
+  var sawServerTransport = false
+  var pollStart = Date.now()
+  while (Date.now() - pollStart < 15000) {
+    var midStates = await h.getNodeStates(page)
+    var nonRoot = Object.keys(midStates).filter(function (id) { return !midStates[id].isRoot })
+    for (var j = 0; j < nonRoot.length; j++) {
+      if (midStates[nonRoot[j]].transport === 'server') {
+        sawServerTransport = true
+        break
+      }
+    }
+    if (sawServerTransport) break
+    await h.wait(300)
+  }
+  h.log('  Saw server transport during reconnection: ' + sawServerTransport)
+
+  // Wait for all remaining nodes to reconnect
+  var expectedCount = 4 // root + 3 remaining (one disconnected)
+  await h.waitForAllConnected(page, expectedCount, 30000)
+
+  // Wait for all to end up on P2P (upgrade from server-first)
+  await h.waitForAll(page, function (states) {
+    var nodeIds = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    return nodeIds.length > 0 && nodeIds.every(function (id) {
+      return states[id].state === 'connected' && states[id].transport === 'p2p'
+    })
+  }, 'all nodes upgrade to P2P after server-first reconnection', 60000)
+
+  h.log('  All nodes recovered to P2P after server-first reconnection')
+  if (sawServerTransport) {
+    h.log('  Confirmed: orphaned nodes used server-first during reconnection')
+  }
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────

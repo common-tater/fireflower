@@ -101,6 +101,9 @@ The `serverFirst` option (default: true) causes `_reviewResponses` to prefer ser
 ### Server-first response batching resets on each new response
 When `serverFirst` is active, `_onresponse` resets the 250ms batch timer on each new response, capped at 1500ms total from the first response. Root's P2P response arrives faster than the relay server's response (Firebase signaling is faster than WebSocket setup). The original design started a single 250ms timer on the first response — subsequent responses didn't reset it. This worked for initial connections but failed during reconnection storms: when a mid-tree node disconnects, all downstream nodes reconnect simultaneously. The relay server, busy handling multiple reconnections, responds slower than 250ms after root. By resetting the timer on each new response, the server gets a fair chance to respond even when it's under load. The 1500ms cap prevents indefinite waiting when no server is running. Non-serverFirst nodes still use the fast 100ms window (no reset).
 
+### Relay server needs longer batching window to connect to root
+The relay server has `serverFirst: false` (it IS the server), so `_onresponse` uses the fast 100ms batching window. Root and level-1 nodes both see the server's request via Firebase. If a level-1 node's response arrives within 100ms but root's response takes longer, `_reviewResponses` fires with only `p2pCandidates` (no `p2pRoots`) and accepts the level-1 node instead of root. Fix: when `this.isServer`, use a 500ms batching window. The relay server only connects once at startup (or on reconnect), so the extra delay is negligible. This ensures root's response arrives before the review, and the priority logic (`p2pRoots` before `p2pCandidates`) correctly selects root.
+
 ### Force-server downgrade
 When `serverOnly` transitions from false to true in `_onconfig`, existing P2P nodes must actively switch to server transport. The `_switchToServer` method closes the P2P upstream, sets state to `'requesting'`, and calls `_dorequest()`. Since `serverOnly` is now true, `_reviewResponses` only accepts server responses. Root is exempt from `serverOnly` (it IS the broadcaster): `this.serverOnly = (this.isServer || this.root) ? false : ...`.
 
@@ -264,3 +267,5 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 22. Minimal Server→P2P Switch — 1 peer on forced server, server disabled, peer reconnects to root via P2P
 23. Server-First Prefers Server, Stays When No Upgrade Target — verifies server-first picks server candidate over root, and peer stays on server when only upgrade target is root (preserves broadcaster bandwidth)
 24. Upgrade Skips Root — server-connected nodes upgrade to each other, not to root
+25. K Limit Enforced Under Rapid Connections — 8 rapid nodes, no node exceeds K=2 connected children
+26. Server-First Reconnection After Mid-Tree Disconnect — orphans use server-first, then upgrade to P2P

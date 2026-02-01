@@ -51,12 +51,17 @@ async function getNodeStates (page) {
     // Root node
     var root = graph.root
     if (root && root.model) {
+      var rootConnected = 0
+      for (var rid in (root.model.downstream || {})) {
+        if (root.model.downstream[rid].didConnect) rootConnected++
+      }
       result[root.id] = {
         id: root.id,
         state: root.model.state,
         transport: root.model.transport || null,
         upstream: root.model.upstream ? root.model.upstream.id : null,
         downstreamCount: Object.keys(root.model.downstream || {}).length,
+        connectedDownstreamCount: rootConnected,
         downstreamIds: Object.keys(root.model.downstream || {}),
         isRoot: true,
         hasServerFallback: !!root.model._serverFallback,
@@ -72,12 +77,17 @@ async function getNodeStates (page) {
       var node = graph.nodes[id]
       if (!node || !node.model) continue
       if (!node.model._debugLog) continue // skip RemotePeerModel (not a real fireflower node)
+      var nodeConnected = 0
+      for (var did in (node.model.downstream || {})) {
+        if (node.model.downstream[did].didConnect) nodeConnected++
+      }
       result[id] = {
         id: id,
         state: node.model.state,
         transport: node.model.transport || null,
         upstream: node.model.upstream ? node.model.upstream.id : null,
         downstreamCount: Object.keys(node.model.downstream || {}).length,
+        connectedDownstreamCount: nodeConnected,
         downstreamIds: Object.keys(node.model.downstream || {}),
         isRoot: false,
         hasServerFallback: !!node.model._serverFallback,
