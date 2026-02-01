@@ -1344,17 +1344,24 @@ Node.prototype._ondownstreamConnect = function (peer) {
   this.emit('peerconnect', peer)
 
   // stop responding to requests if connected peers >= K
-  var connected = 0
+  // and close excess peers if connected > K (race: multiple pending peers
+  // completed ICE simultaneously, each passing the _onrequest gate while pending)
+  var connectedPeers = []
   for (var cid in this.downstream) {
-    if (this.downstream[cid].didConnect) connected++
+    if (this.downstream[cid].didConnect) connectedPeers.push(this.downstream[cid])
   }
-  var childIds = []
-  for (var cid2 in this.downstream) {
-    if (this.downstream[cid2].didConnect) childIds.push(cid2.slice(-5))
-  }
+  var connected = connectedPeers.length
+  var childIds = connectedPeers.map(function (p) { return p.id.slice(-5) })
   console.log('[' + ts() + '] [fireflower] downstream connected', this.id.slice(-5), '<-', peer.id.slice(-5), 'connected:', connected + '/' + this.opts.K, connected >= this.opts.K ? '(FULL children: ' + childIds.join(',') + ')' : '')
   if (connected >= this.opts.K) {
     firebase.off(this._requestsRef, 'child_added', this._onrequest)
+  }
+  if (connected > this.opts.K) {
+    // Close excess — the newest arrival (this peer) is the one over capacity,
+    // so close it to preserve existing children's connections
+    console.log('[' + ts() + '] [fireflower] OVER CAPACITY', this.id.slice(-5), connected + '/' + this.opts.K, '— closing excess peer', peer.id.slice(-5))
+    peer.close()
+    return
   }
 
   // make sure downstream has the most up to date mask (including ancestor chain)
