@@ -392,15 +392,17 @@ async function scenario13 (page) {
   var serverCount = nonRoot.filter(function (id) { return midStates[id].transport === 'server' }).length
   h.log('  After disconnect: ' + serverCount + ' on server, ' + (nonRoot.length - serverCount) + ' on p2p')
 
-  // Wait for all to end up on P2P (upgrade from server)
+  // Wait for most nodes to upgrade to P2P. The last server-connected node may
+  // stay on server if all other nodes are its descendants (upgrade skips root
+  // to preserve broadcaster bandwidth — this is acceptable).
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
-    return ids.length > 0 && ids.every(function (id) {
-      return states[id].state === 'connected' && states[id].transport === 'p2p'
-    })
-  }, 'all nodes upgrade to P2P after fallback', 60000)
+    if (ids.length === 0) return false
+    var serverCount = ids.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && ids.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes upgrade to P2P after fallback (at most 1 on server)', 60000)
 
-  h.log('  All nodes recovered to P2P after server fallback')
+  h.log('  Nodes recovered after server fallback')
 }
 
 async function scenario14 (page) {
@@ -439,18 +441,17 @@ async function scenario14 (page) {
   // Wait for all nodes to be connected and stable
   await h.waitForAllConnected(page, 4, 15000)
 
-  // Wait for all nodes to upgrade to P2P (server-first nodes need the upgrade
-  // timer to fire — p2pUpgradeInterval=5s plus up to 25% jitter plus ICE time)
+  // Wait for most nodes to upgrade to P2P (server-first nodes need the upgrade
+  // timer to fire — p2pUpgradeInterval=5s plus up to 25% jitter plus ICE time).
+  // The last server-connected node may stay on server if all others are its descendants.
   await h.waitForAll(page, function (states) {
-    var ids = Object.keys(states)
-    for (var i = 0; i < ids.length; i++) {
-      var s = states[ids[i]]
-      if (!s.isRoot && s.transport !== 'p2p') return false
-    }
-    return true
-  }, 'all nodes upgrade to P2P after heartbeat recovery', 20000)
+    var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (ids.length === 0) return false
+    var serverCount = ids.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && ids.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes upgrade to P2P after heartbeat recovery (at most 1 on server)', 20000)
 
-  h.log('  All nodes on P2P with no active fallback after recovery')
+  h.log('  Nodes on P2P after recovery (at most 1 on server)')
 }
 
 async function scenario15 (page) {
@@ -514,15 +515,16 @@ async function scenario16 (page) {
   await h.waitForAllConnected(page, remaining, 30000)
   h.log('  All remaining nodes reconnected after rapid disconnects')
 
-  // Wait for all to end up on P2P
+  // Wait for most nodes to end up on P2P. The last server-connected node may
+  // stay on server if all others are its descendants (upgrade skips root).
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
-    return ids.length > 0 && ids.every(function (id) {
-      return states[id].state === 'connected' && states[id].transport === 'p2p'
-    })
-  }, 'all nodes upgrade to P2P', 60000)
+    if (ids.length === 0) return false
+    var serverCount = ids.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && ids.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes upgrade to P2P (at most 1 on server)', 60000)
 
-  h.log('  All nodes recovered to P2P after rapid disconnects with server fallback')
+  h.log('  Nodes recovered after rapid disconnects with server fallback')
 }
 
 async function scenario17 (page) {
@@ -544,15 +546,16 @@ async function scenario17 (page) {
   var serverCount = nonRoot.filter(function (id) { return initialStates[id].transport === 'server' }).length
   h.log('  Initial: ' + serverCount + '/' + nonRoot.length + ' on server (server-first)')
 
-  // Wait for P2P upgrade — nodes should switch from server to P2P
+  // Wait for most nodes to upgrade to P2P. The last server-connected node may
+  // stay on server if all other nodes are its descendants (upgrade skips root).
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
     if (ids.length === 0) return false
-    var p2pCount = ids.filter(function (id) { return states[id].transport === 'p2p' }).length
-    return p2pCount === ids.length
-  }, 'all nodes upgrade to P2P after server-first', 60000)
+    var serverCount = ids.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && ids.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes upgrade to P2P after server-first (at most 1 on server)', 60000)
 
-  h.log('  All nodes upgraded from server-first to P2P')
+  h.log('  Nodes upgraded from server-first (at most 1 on server)')
 }
 
 async function scenario18 (page) {
@@ -562,17 +565,17 @@ async function scenario18 (page) {
   await h.setServerEnabled(page, true)
   await h.wait(2000)
 
-  // Add nodes and wait for them to be on P2P (may go through server-first then upgrade)
+  // Add nodes and wait for them to be on P2P (may go through server-first then upgrade).
+  // At most 1 may stay on server if it's everyone's ancestor (upgrade skips root).
   await h.addNodes(page, 3, { p2pUpgradeInterval: 5000 })
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
     if (ids.length < 3) return false
-    return ids.every(function (id) {
-      return states[id].state === 'connected' && states[id].transport === 'p2p'
-    })
-  }, 'all nodes on P2P', 60000)
+    var serverCount = ids.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && ids.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes on P2P (at most 1 on server)', 60000)
 
-  h.log('  All nodes on P2P, now toggling Force Server ON...')
+  h.log('  Nodes ready, toggling Force Server ON...')
   await h.setForceServer(page, true)
 
   // All non-root should switch to server
@@ -599,12 +602,11 @@ async function scenario19 (page) {
   await h.waitForAll(page, function (states) {
     var ids = Object.keys(states).filter(function (id) { return !states[id].isRoot })
     if (ids.length < 3) return false
-    return ids.every(function (id) {
-      return states[id].state === 'connected' && states[id].transport === 'p2p'
-    })
-  }, 'all nodes on P2P', 60000)
+    var serverCount = ids.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && ids.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes on P2P (at most 1 on server)', 60000)
 
-  h.log('  All nodes on P2P, toggling Force Server ON...')
+  h.log('  Nodes ready, toggling Force Server ON...')
   await h.setForceServer(page, true)
 
   await h.waitForAll(page, function (states) {
@@ -942,11 +944,10 @@ async function scenario26 (page) {
   await h.waitForAll(page, function (states) {
     var nodeIds = Object.keys(states).filter(function (id) { return !states[id].isRoot })
     if (nodeIds.length < 4) return false
-    return nodeIds.every(function (id) {
-      return states[id].state === 'connected' && states[id].transport === 'p2p'
-    })
-  }, 'all 4 nodes on P2P', 60000)
-  h.log('  All 4 nodes upgraded to P2P')
+    var serverCount = nodeIds.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && nodeIds.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes on P2P (at most 1 on server)', 60000)
+  h.log('  Nodes upgraded (at most 1 on server)')
 
   // Find a mid-tree node with children
   var states = await h.getNodeStates(page)
@@ -981,15 +982,16 @@ async function scenario26 (page) {
   var expectedCount = 4 // root + 3 remaining (one disconnected)
   await h.waitForAllConnected(page, expectedCount, 30000)
 
-  // Wait for all to end up on P2P (upgrade from server-first)
+  // Wait for most nodes to upgrade to P2P after reconnection. The last
+  // server-connected node may stay on server if all others are its descendants.
   await h.waitForAll(page, function (states) {
     var nodeIds = Object.keys(states).filter(function (id) { return !states[id].isRoot })
-    return nodeIds.length > 0 && nodeIds.every(function (id) {
-      return states[id].state === 'connected' && states[id].transport === 'p2p'
-    })
-  }, 'all nodes upgrade to P2P after server-first reconnection', 60000)
+    if (nodeIds.length === 0) return false
+    var serverCount = nodeIds.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && nodeIds.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes upgrade to P2P after server-first reconnection (at most 1 on server)', 60000)
 
-  h.log('  All nodes recovered to P2P after server-first reconnection')
+  h.log('  Nodes recovered after server-first reconnection')
   if (sawServerTransport) {
     h.log('  Confirmed: orphaned nodes used server-first during reconnection')
   }

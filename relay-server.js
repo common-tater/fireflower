@@ -18,6 +18,7 @@
 var WebSocketServer = require('ws').Server
 var wrtc = require('node-datachannel/polyfill')
 var os = require('os')
+var ServerPeerAdapter = require('./server-peer-adapter')
 
 // Auto-detect LAN IP so remote devices (phones, other machines) can reach the
 // relay server. 0.0.0.0 only works for same-machine connections.
@@ -175,8 +176,8 @@ node.on('disconnect', function () {
 })
 
 // Update capacity state on downstream changes
-node.on('downstreamConnect', updateServerCapacityState)
-node.on('downstreamDisconnect', updateServerCapacityState)
+node.on('peerconnect', updateServerCapacityState)
+node.on('peerdisconnect', updateServerCapacityState)
 
 
 wss.on('connection', function (ws) {
@@ -206,6 +207,19 @@ wss.on('connection', function (ws) {
         delete node._pendingAdapters[clientId]
         adapter.wireUp(ws)
         console.log('Wired up adapter for', clientId)
+      } else if (node.state === 'connected') {
+        // Cold connection (direct server reconnect) — no Firebase request/response,
+        // client connected directly using cached serverUrl. Create adapter on the fly.
+        console.log('Cold connection from', clientId, '— creating adapter')
+        var coldAdapter = new ServerPeerAdapter(clientId, node.id)
+        node.downstream[clientId] = coldAdapter
+        coldAdapter.on('close', node._onpeerDisconnect.bind(node, coldAdapter, null))
+        coldAdapter.wireUp(ws)
+        // Create notifications channel (now that _ws is set, channel-open reaches client)
+        coldAdapter.notifications = coldAdapter.createDataChannel('notifications')
+        coldAdapter.notifications.onopen = function () {
+          node._onnotificationsOpen(coldAdapter)
+        }
       } else {
         console.warn('No pending adapter for client', clientId, '— closing')
         ws.close()

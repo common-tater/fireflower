@@ -1171,6 +1171,115 @@ Node.prototype._closeServerFallback = function () {
   fallback.close()
 }
 
+/**
+ * Connect directly to the server using cached _serverInfo, bypassing Firebase signaling.
+ * Used for fast reconnection when upstream dies and server info is already known.
+ * Falls back to normal connect() on failure.
+ */
+Node.prototype._connectToServerDirect = function () {
+  var self = this
+  var serverUrl = this._serverInfo.serverUrl
+  var serverId = this._serverInfo.id
+
+  this._log('direct server connect to ' + serverUrl)
+  console.log('[' + ts() + '] [fireflower] _connectToServerDirect', this.id, '->', serverUrl)
+
+  this.state = 'connecting'
+  this.emit('statechange')
+
+  var transport = new ServerTransport({
+    url: serverUrl,
+    nodeId: this.id,
+    initiator: true
+  })
+
+  transport.id = serverId
+  transport.transportType = 'server'
+
+  var settled = false
+
+  var failTimeout = this._setTimeout(function () {
+    if (settled) return
+    settled = true
+    self._log('direct server connect timeout, falling back')
+    transport.removeAllListeners()
+    transport.close()
+    self.state = 'disconnected'
+    self.connect()
+  }, self.connectionTimeout)
+
+  transport.on('connect', function () {
+    if (settled) {
+      transport.removeAllListeners()
+      transport.close()
+      return
+    }
+    settled = true
+    self._clearTimeout(failTimeout)
+
+    // Already connected by someone else while we were connecting
+    if (self.state === 'connected') {
+      transport.removeAllListeners()
+      transport.close()
+      return
+    }
+
+    transport.didConnect = true
+    self.upstream = transport
+    self._transport = 'server'
+    self._connectedAt = Date.now()
+
+    self._log('direct server connected -> ' + serverId)
+    console.log('[' + ts() + '] [fireflower] upstream connected (direct)', self.id, '->', serverId, 'transport: server')
+
+    self.state = 'connected'
+    self.emit('statechange')
+    self.emit('connect', transport)
+    self.emit('fallback')
+
+    // Start P2P upgrade timer (unless serverOnly)
+    if (self.p2pUpgradeInterval && !self.serverOnly) {
+      self._stopUpgradeTimer()
+      var jitter = Math.floor(Math.random() * self.p2pUpgradeInterval * 0.25)
+      self._upgradeTimer = self._setTimeout(function () {
+        self._attemptUpgrade()
+      }, self.p2pUpgradeInterval + jitter)
+    }
+
+    self._reviewRequests()
+  })
+
+  transport.on('close', function () {
+    if (settled) {
+      // Already connected — this is a real disconnect
+      if (self.upstream === transport) {
+        self._onpeerDisconnect(transport, null)
+      }
+      return
+    }
+    settled = true
+    self._clearTimeout(failTimeout)
+    self._log('direct server connect failed, falling back')
+    self.state = 'disconnected'
+    self.connect()
+  })
+
+  // Wire notifications channel for mask updates and heartbeat
+  transport.on('datachannel', function (channel) {
+    if (channel.label === 'notifications') {
+      transport.notifications = channel
+      channel.onmessage = function (evt) {
+        var data = JSON.parse(evt.data)
+        if (data.type === 'heartbeat') {
+          self._onheartbeat(transport)
+        } else {
+          self._onmaskUpdate(evt)
+        }
+      }
+    }
+  })
+}
+
 Node.prototype._onpeerConnect = function (peer, remoteSignals) {
   debug(this.id + ' peer connected: ' + peer.id)
   peer.didConnect = true
@@ -1375,8 +1484,17 @@ Node.prototype._onupstreamDisconnect = function (peer) {
       ancestors: []
     })
 
-    // give our mask update a head start and/or wait longer if we timed out
+    // Fast path: if we were connected and have cached server info, connect
+    // directly to the server WebSocket without going through Firebase signaling.
+    // This shaves seconds off reconnection for orphaned nodes.
     var self = this
+    if (peer.didConnect && this._serverInfo && this.serverFirst && !this._serverAtCapacity && !this.isServer && !this.root) {
+      this._log('fast reconnect via direct server connect')
+      this._connectToServerDirect()
+      return
+    }
+
+    // give our mask update a head start and/or wait longer if we timed out
     var delay = peer.didConnect ? 100 : this.connectionTimeout
     this._log('scheduling reconnect delay=' + delay + 'ms')
 
