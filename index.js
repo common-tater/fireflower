@@ -553,7 +553,7 @@ Node.prototype._onresponse = function (snapshot) {
   } else {
     this._responses = [ snapshot ]
     this._clearTimeout(this._responseReviewInterval)
-    this._responseReviewInterval = this._setTimeout(this._reviewResponses, 250)
+    this._responseReviewInterval = this._setTimeout(this._reviewResponses, 100)
   }
 }
 
