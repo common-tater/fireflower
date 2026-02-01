@@ -39,23 +39,31 @@ function GraphView (path, root) {
   var self = this
 
   // 1. Downstream peers connecting to us
+  // Defer briefly so Firebase has time to identify the server node,
+  // preventing a gray flash before _updateServerNode runs.
   root.on('peerconnect', function (peer) {
-    // If we created this node locally (via click), we already have a full view for it.
-    // Only create a remote view if we don't know about it.
-    if (self.nodes[peer.id]) return
-    // Skip if this is the server node (already shown as green SERVER element)
-    if (self.serverNode && self.serverNode.serverId === peer.id) return
+    setTimeout(function () {
+      if (self.nodes[peer.id]) return
+      if (self.serverNode && self.serverNode.serverId === peer.id) return
 
-    console.log('Visualizing downstream peer:', peer.id)
-    var remoteModel = new RemotePeerModel(peer, { upstream: root })
-    var nodeView = new NodeView(self, remoteModel)
+      // Check Firebase reports directly — the serverNode element may not
+      // have the serverId set yet (still in "connecting..." state)
+      if (self._serverReports) {
+        for (var rid in self._serverReports) {
+          if (rid === peer.id && self._serverReports[rid].isServer) return
+        }
+      }
 
-    // Position downstream nodes in a fan-out below the local node
-    nodeView.x = self.width / 2 + (Math.random() * 200 - 100)
-    nodeView.y = self.height / 2 + 150
+      console.log('Visualizing downstream peer:', peer.id)
+      var remoteModel = new RemotePeerModel(peer, { upstream: root })
+      var nodeView = new NodeView(self, remoteModel)
 
-    self.nodes[peer.id] = nodeView
-    self.render()
+      nodeView.x = self.width / 2 + (Math.random() * 200 - 100)
+      nodeView.y = self.height / 2 + 150
+
+      self.nodes[peer.id] = nodeView
+      self.render()
+    }, 500)
   })
 
   // 2. Downstream peers disconnecting
@@ -134,6 +142,32 @@ GraphView.prototype.render = function () {
 
     node.render()
   }
+
+  this.updateOverlay()
+}
+
+GraphView.prototype.updateOverlay = function () {
+  var nodeCount = Object.keys(this.nodes).length
+  var p2pCount = 0
+  var serverCount = 0
+
+  for (var id in this.nodes) {
+    var node = this.nodes[id]
+    var model = node.model
+    if (model.state !== 'connected') continue
+    if (model.transport === 'server') {
+      serverCount++
+    } else if (model.upstream) {
+      p2pCount++
+    }
+  }
+
+  var statNodes = document.getElementById('stat-nodes')
+  var statP2p = document.getElementById('stat-p2p')
+  var statServer = document.getElementById('stat-server')
+  if (statNodes) statNodes.textContent = nodeCount
+  if (statP2p) statP2p.textContent = p2pCount
+  if (statServer) statServer.textContent = serverCount
 }
 
 GraphView.prototype._watchServerNode = function (path) {
