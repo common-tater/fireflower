@@ -128,6 +128,9 @@ The 2D visualizer detects whether the relay server is running by watching `confi
 ### _reviewRequests must use connected count, not total count
 `_reviewRequests` decides whether to re-subscribe to Firebase requests (i.e., resume accepting new children). It must use the count of **connected** downstream peers, not `Object.keys(this.downstream).length` (which includes pending peers still in ICE negotiation). During P2P upgrades, a node responds to many requests, creating pending downstream peers. Most never connect (the requester accepted a different response). These stale pending peers sit in `this.downstream` for up to `connectionTimeout` (5s). If `_reviewRequests` counts them, the node thinks it's at capacity and stops listening for requests — even though it has fewer than K connected children. This causes root isolation: root loses its connected children but can't accept new ones because pending peers block the resume check. The stop check in `_ondownstreamConnect` and the resume check in `_reviewRequests` must use the same metric (connected count).
 
+### Upgrade requests should skip root
+When server-connected nodes upgrade to P2P via `_attemptUpgrade`, they should connect to other peers — not to root. Root's K capacity is precious (relay server + high-level nodes). In `onUpgradeResponse`, filter out responses where `!response.upstream` (root has no upstream). This means the last server-connected node may stay on server if no other peer is available as an upgrade target, which is acceptable — the server connection is healthy and that node serves as a sub-tree root for the relay server's children.
+
 ### VPN/CGNAT breaks same-machine WebRTC
 WebRTC ICE candidates on a machine with an active VPN may only include the VPN tunnel's CGNAT address (e.g., `100.64.x.x` on `utun4`). Same-page WebRTC connections (used by the test suite and the example app's peer nodes) require UDP hairpin through the ICE candidate's interface. CGNAT addresses can't hairpin, so all P2P connections fail silently (ICE state goes to `failed`). Fix: disable VPN during development/testing, or configure the VPN to exclude local traffic. The test runner's Chrome flags (`--disable-features=WebRtcHideLocalIpsWithMdns`, `--allow-loopback-in-peer-connection`) help with mDNS but don't fix the CGNAT routing issue.
 
@@ -150,7 +153,7 @@ If a node's process is killed or a browser tab is closed without proper cleanup,
 When running tests with `?path=test-tree`, any other browser tab (e.g., user's Brave browser) open on the same path joins the same tree. These "ghost nodes" are LIVE nodes with fresh timestamps, so the 60s stale request check doesn't catch them. They can fill root's K capacity (e.g., K=2 with relay + ghost = FULL), blocking test nodes from upgrading to P2P. Ghost nodes are not a bug — they're legitimate nodes on the same tree. The system must be resilient to unexpected nodes consuming root capacity. Key insight: the upgrade deadlock was not caused by ghost nodes per se, but by the now-removed server-transport-no-respond restriction that prevented server-connected nodes from forming P2P sub-trees when root was full.
 
 ### Console.log strategy for index.js
-Strategic console.logs remain in index.js for key topology and diagnostic events: upstream/downstream connected/disconnected, `_dorequest` with full state, `_reviewResponses` with candidate counts, `_reviewRequests` decisions (SUBSCRIBING/SKIP/FULL), `_attemptUpgrade`, and request SKIP reasons. All other diagnostic info goes to the `_debugLog` ring buffer (via `this._log()`). This keeps console output focused on connection topology while preserving full diagnostic data for post-mortem analysis via `waitForAll` timeout dumps. When debugging a specific issue, add temporary console.logs but remove them before committing.
+Strategic console.logs remain in index.js **only** for topology-changing events: upstream/downstream connected/disconnected, `_dorequest` with full state, `RESPOND` (accepting a request), `_reviewResponses` with candidate counts, `_reviewRequests` decisions (SUBSCRIBING/FULL), `_attemptUpgrade`, and `serverOnly` transitions. Per-request diagnostics (SAW request, SKIP request, every _onresponse) go to the `_debugLog` ring buffer (via `this._log()`) to keep console output focused on connection topology. The ring buffer preserves full diagnostic data for post-mortem analysis via `waitForAll` timeout dumps. When debugging a specific issue, add temporary console.logs but remove them before committing.
 
 ### Zombie pending peers from serverOnly nodes block capacity
 When `serverOnly` is true, nodes only accept server responses. But their Firebase requests are visible to all responders, including root and P2P nodes. Root responds to these requests, creating pending downstream peers. The `serverOnly` node ignores root's P2P response (it only wants server), but root's pending entry persists for `connectionTimeout` (5s). Previously, a `pendingCount >= K` cap in `_onrequest` blocked root from responding to ANY new requests while these zombie pending peers existed. Fix: remove the pending count cap entirely — the connected count cap (`connected >= K`) is the real gate. Zombie pending peers expire harmlessly after 5s.
@@ -205,10 +208,10 @@ The example app reads `?path=<name>` from the URL query string, defaulting to `'
 
 ## Testing
 
-Automated test suite using Puppeteer that runs 23 scenarios with a visible browser:
+Automated test suite using Puppeteer with a visible browser:
 
 ```bash
-npm test           # Run all 23 scenarios
+npm test           # Run all scenarios
 node test/run.js 3 # Run only scenario 3
 ```
 
@@ -224,7 +227,7 @@ Tests use the isolated Firebase path `test-tree` (not the default `tree`) so the
 Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to watch tests in 3D.
 
 ### Test files
-- `test/run.js` — Main test runner with all 23 scenarios
+- `test/run.js` — Main test runner with all scenarios
 - `test/helpers.js` — Shared utilities (addNodes, waitForAllConnected, setK, etc.); `TEST_PATH` constant defines the isolated path
 
 ### Scenarios
@@ -251,3 +254,4 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 21. Transitive Circle Prevention During Upgrades — verify ancestor chain prevents N-node circles
 22. Minimal Server→P2P Switch — 1 peer on forced server, server disabled, peer reconnects to root via P2P
 23. Server-First Prefers Server Over P2P Root — verifies server-first actually picks server candidate when root also responds
+24. Upgrade Skips Root — server-connected nodes upgrade to each other, not to root
