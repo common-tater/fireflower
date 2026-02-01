@@ -19,6 +19,13 @@ knumber.addEventListener('change', onkchanged)
 
 var serverCapacityInput = document.querySelector('#server-capacity-number input')
 serverCapacityInput.addEventListener('change', onServerCapacityChanged)
+serverCapacityInput.addEventListener('input', function () {
+  // Clicking down arrow from 1 gives 0 — treat as "clear to infinity"
+  if (serverCapacityInput.value === '0' || serverCapacityInput.value === '') {
+    serverCapacityInput.value = ''
+    onServerCapacityChanged()
+  }
+})
 
 // --- Controls ---
 var { remove, set, onValue } = require('firebase/database')
