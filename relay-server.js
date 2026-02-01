@@ -17,6 +17,23 @@
 
 var WebSocketServer = require('ws').Server
 var wrtc = require('node-datachannel/polyfill')
+var os = require('os')
+
+// Auto-detect LAN IP so remote devices (phones, other machines) can reach the
+// relay server. 0.0.0.0 only works for same-machine connections.
+function getLanIp () {
+  var interfaces = os.networkInterfaces()
+  for (var name in interfaces) {
+    var addrs = interfaces[name]
+    for (var j = 0; j < addrs.length; j++) {
+      var addr = addrs[j]
+      if (addr.family === 'IPv4' && !addr.internal) {
+        return addr.address
+      }
+    }
+  }
+  return '0.0.0.0'
+}
 
 // Parse command line arguments
 var args = process.argv.slice(2)
@@ -24,6 +41,7 @@ var port = process.env.PORT || 8082
 var firebasePath = process.env.FIREBASE_PATH || 'tree'
 var firebaseConfigPath = './example/firebase-config.js'
 var nodeId = process.env.NODE_ID || null
+var serverHost = process.env.SERVER_HOST || null
 
 for (var i = 0; i < args.length; i++) {
   if (args[i] === '--port' && args[i + 1]) {
@@ -37,6 +55,9 @@ for (var i = 0; i < args.length; i++) {
     i++
   } else if (args[i] === '--id' && args[i + 1]) {
     nodeId = args[i + 1]
+    i++
+  } else if (args[i] === '--host' && args[i + 1]) {
+    serverHost = args[i + 1]
     i++
   }
 }
@@ -53,7 +74,8 @@ try {
 }
 
 var firebase = firebaseInit.init(firebaseConfig)
-var serverUrl = 'ws://0.0.0.0:' + port
+var host = serverHost || getLanIp()
+var serverUrl = 'ws://' + host + ':' + port
 
 // Create the Node — connects as a child of the root via WebRTC
 var fireflower = require('./')(firebase.db)

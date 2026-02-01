@@ -116,6 +116,9 @@ When `serverOnly` transitions from false to true in `_onconfig`, existing P2P no
 ### Server URL must be in Firebase config
 `_serverInfo` (needed for server fallback and server-first) was previously only populated when a node happened to see a server response during `_reviewResponses`. Nodes that connected via P2P on first try never got it. The relay server now writes `serverUrl` to `tree/configuration/serverUrl` on connect and removes it on disconnect. Every node picks it up via `_onconfig` — no new subscriptions needed.
 
+### Relay server must advertise LAN IP, not 0.0.0.0
+The relay server's `serverUrl` is written to Firebase config and included in response data. Nodes use it to open a WebSocket connection to the relay server. If the URL is `ws://0.0.0.0:8082`, same-machine browsers resolve it to localhost and it works. But remote devices (phones, other machines) interpret `0.0.0.0` as their own loopback — the WebSocket connection silently fails and the node falls back to P2P, never reaching the server. The relay server now auto-detects the LAN IP via `os.networkInterfaces()` and advertises that (e.g., `ws://192.168.86.41:8082`). Override with `--host <ip>` or `SERVER_HOST=<ip>` env var.
+
 ### Upstream-also-responded filter must not apply to server candidates
 In `_reviewResponses`, there's a filter: `if (candidates[c.upstream]) continue` — "if your upstream also responded, skip you and prefer the higher node." This makes sense for P2P (prefer level-1 over level-2) but must NOT apply to server candidates. The relay server is always a child of root. Root always responds to requests. So this filter **always** skips the server candidate when root also responded. The fix: only apply the upstream filter to P2P candidates, never to server candidates. This was invisible before server-first and force-server because the server candidate was rarely needed in `_reviewResponses` (fallback used its own separate request/response flow).
 
