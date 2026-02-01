@@ -242,6 +242,20 @@ onValue(configRef, function (snapshot) {
   }
 })
 
+// Watch serverCapacity from Firebase config (takes precedence over command line/env)
+var serverCapacityConfigRef = ref(firebase.db, firebasePath + '/configuration/serverCapacity')
+onValue(serverCapacityConfigRef, function (snapshot) {
+  var capacity = snapshot.val()
+  if (capacity != null) {
+    node.opts.serverCapacity = capacity
+    console.log('Server capacity updated from config:', capacity)
+    updateServerCapacityState()
+  } else if (serverCapacity) {
+    // Fall back to command line/env var if Firebase config is null
+    node.opts.serverCapacity = serverCapacity
+  }
+})
+
 // When Firebase reconnects after a brief drop, onDisconnect has already fired
 // and removed serverUrl. Re-publish if the tree node is still active.
 var connectedRef = ref(firebase.db, '.info/connected')
