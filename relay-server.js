@@ -87,23 +87,31 @@ wss.on('listening', function () {
   console.log('WebSocket server listening on port', port)
 })
 
-node.on('connect', function () {
-  console.log('Node connected to tree as child (level 1)')
-  console.log('Upstream:', node.upstream ? node.upstream.id : 'none')
-  console.log('Transport:', node.transport)
+var nodeConnected = false
 
-  // Publish serverUrl to config so all nodes can discover the server
+function publishServerPresence () {
   var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
   set(serverUrlConfigRef, serverUrl)
   // Auto-remove serverUrl if Firebase connection drops (process kill, crash, etc.)
+  // onDisconnect is one-shot — re-register each time Firebase reconnects
   onDisconnect(serverUrlConfigRef).remove()
 
   // Auto-remove server report on Firebase disconnect
   var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
   onDisconnect(reportRef).remove()
+}
+
+node.on('connect', function () {
+  console.log('Node connected to tree as child (level 1)')
+  console.log('Upstream:', node.upstream ? node.upstream.id : 'none')
+  console.log('Transport:', node.transport)
+
+  nodeConnected = true
+  publishServerPresence()
 })
 
 node.on('disconnect', function () {
+  nodeConnected = false
   // Remove serverUrl from config when server disconnects
   var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
   remove(serverUrlConfigRef)
@@ -111,6 +119,7 @@ node.on('disconnect', function () {
   var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
   remove(reportRef)
 })
+
 
 wss.on('connection', function (ws) {
   console.log('New WebSocket connection from', ws._socket.remoteAddress)
@@ -172,6 +181,15 @@ onValue(configRef, function (snapshot) {
     console.log('Server DISABLED via config — disconnecting from tree')
     serverActive = false
     node.disconnect()
+  }
+})
+
+// When Firebase reconnects after a brief drop, onDisconnect has already fired
+// and removed serverUrl. Re-publish if the tree node is still active.
+var connectedRef = ref(firebase.db, '.info/connected')
+onValue(connectedRef, function (snapshot) {
+  if (snapshot.val() === true && nodeConnected) {
+    publishServerPresence()
   }
 })
 
