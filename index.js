@@ -384,6 +384,14 @@ Node.prototype._dorequest = function () {
 }
 
 Node.prototype._onrequest = function (snapshot) {
+  // Prune _respondedRequests older than 60s (matches stale request window)
+  var now = Date.now()
+  for (var rid in this._respondedRequests) {
+    if (now - this._respondedRequests[rid] > 60000) {
+      delete this._respondedRequests[rid]
+    }
+  }
+
   var requestId = snapshot.key
   var request = snapshot.val()
   var peerId = request.id
@@ -510,7 +518,7 @@ Node.prototype._onrequest = function (snapshot) {
   // firebase can trigger events in the same tick which could circumvent
   // the K check at the top of this method
   // Track that we've responded to this request to prevent duplicates
-  this._respondedRequests[requestId] = true
+  this._respondedRequests[requestId] = Date.now()
 
   var transportOpts = this.isServer ? { transport: 'server', serverUrl: this.serverUrl } : null
   this._connectToPeer(true, peerId, requestId, responseRef, transportOpts)
@@ -1478,6 +1486,12 @@ Node.prototype._updateMask = function (data) {
 
 Node.prototype._getHealthScore = function () {
   var now = Date.now()
+
+  // Prune _reconnectTimes older than 2 minutes
+  while (this._reconnectTimes.length && now - this._reconnectTimes[0] > 120000) {
+    this._reconnectTimes.shift()
+  }
+
   var downstreamCount = Object.keys(this.downstream).length
   var K = this.opts.K || 2
 
