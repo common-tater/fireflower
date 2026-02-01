@@ -107,8 +107,8 @@ function Node (path, opts) {
   this.K = this.K || 0
 
   // use external setTimeout if provided
-  this._setTimeout = this.opts.setTimeout || setTimeout.bind(window)
-  this._clearTimeout = this.opts.clearTimeout || clearTimeout.bind(window)
+  this._setTimeout = this.opts.setTimeout || setTimeout
+  this._clearTimeout = this.opts.clearTimeout || clearTimeout
 
   // bind callbacks
   this._onconfig = this._onconfig.bind(this)
