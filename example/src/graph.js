@@ -43,6 +43,8 @@ function GraphView (path, root) {
     // If we created this node locally (via click), we already have a full view for it.
     // Only create a remote view if we don't know about it.
     if (self.nodes[peer.id]) return
+    // Skip if this is the server node (already shown as green SERVER element)
+    if (self.serverNode && self.serverNode.serverId === peer.id) return
 
     console.log('Visualizing downstream peer:', peer.id)
     var remoteModel = new RemotePeerModel(peer, { upstream: root })
@@ -70,6 +72,8 @@ function GraphView (path, root) {
   root.on('connect', function (peer) {
     if (!peer) return // connected as root
     if (self.nodes[peer.id]) return
+    // Skip if this is the server node (already shown as green SERVER element)
+    if (self.serverNode && self.serverNode.serverId === peer.id) return
 
     console.log('Visualizing upstream peer:', peer.id)
     // For upstream, WE are the downstream
@@ -190,6 +194,12 @@ GraphView.prototype._updateServerNode = function () {
     if (!this.serverNode || this.serverNode.serverId !== sid || this.serverNode.offline) {
       this._removeServerNode()
       this._createServerNodeEl(sid, false)
+    }
+    // Remove any gray RemotePeerModel duplicate (peerconnect may have fired
+    // before Firebase identified this peer as the server node)
+    if (this.nodes[sid] && this.nodes[sid].model instanceof RemotePeerModel) {
+      this.nodes[sid].destroy()
+      delete this.nodes[sid]
     }
     this.serverNode.report = sreport
     var statusEl = this.serverNode.el.querySelector('#status')
