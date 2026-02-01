@@ -92,6 +92,8 @@ $ node test/run.js 3 # Run a single scenario
 
 Tests launch a visible Chrome browser so you can watch nodes connect in the 2D visualizer while scenarios execute. The test runner manages the example server, relay server, and Firebase state automatically. Tests use an isolated Firebase path (`test-tree`) so they don't interfere with manual testing.
 
+**Note:** WebRTC connections may fail when a VPN is active. VPN tunnel interfaces often use CGNAT addresses (e.g., `100.64.x.x`) that cannot hairpin UDP traffic, causing all P2P connections to silently fail (ICE state goes to `failed`). Disable your VPN before running tests or developing locally.
+
 ### Scenarios
 1. Basic P2P Tree (K=2)
 2. Server Fallback
