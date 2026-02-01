@@ -554,14 +554,24 @@ Node.prototype._onresponse = function (snapshot) {
     this._responses.push(snapshot)
   } else {
     this._responses = [ snapshot ]
-    this._clearTimeout(this._responseReviewInterval)
-    // Use longer window when serverFirst is active — server responses arrive
-    // after P2P root because WebSocket setup takes more time than direct
-    // Firebase signaling. Without this, the 100ms window closes before the
-    // server candidate arrives and serverFirst never fires.
-    var delay = (this.serverFirst && !this.serverOnly) ? 250 : 100
-    this._responseReviewInterval = this._setTimeout(this._reviewResponses, delay)
+    this._responseWindowStart = Date.now()
   }
+
+  // When serverFirst is active, reset the batch timer on each new response
+  // so the server gets a fair chance. During reconnection storms the relay
+  // server can be slower than root's P2P response — without resetting, the
+  // first 250ms window closes before the server candidate arrives. Cap total
+  // wait at 1500ms so we don't block forever if no server is running.
+  this._clearTimeout(this._responseReviewInterval)
+  var delay
+  if (this.serverFirst && !this.serverOnly) {
+    var elapsed = Date.now() - this._responseWindowStart
+    var remaining = 1500 - elapsed
+    delay = remaining > 250 ? 250 : (remaining > 50 ? remaining : 50)
+  } else {
+    delay = 100
+  }
+  this._responseReviewInterval = this._setTimeout(this._reviewResponses, delay)
 }
 
 Node.prototype._reviewResponses = function () {
