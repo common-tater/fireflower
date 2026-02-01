@@ -33,6 +33,56 @@ function GraphView (path, root) {
 
   // Watch Firebase reports for server node
   this._watchServerNode(path)
+
+  // Listen for local neighborhood events to visualize peers we know about
+  // even if we aren't the global root.
+  var self = this
+
+  // 1. Downstream peers connecting to us
+  root.on('peerconnect', function (peer) {
+    // If we created this node locally (via click), we already have a full view for it.
+    // Only create a remote view if we don't know about it.
+    if (self.nodes[peer.id]) return
+
+    console.log('Visualizing downstream peer:', peer.id)
+    var remoteModel = new RemotePeerModel(peer, { upstream: root })
+    var nodeView = new NodeView(self, remoteModel)
+
+    // Position downstream nodes in a fan-out below the local node
+    nodeView.x = self.width / 2 + (Math.random() * 200 - 100)
+    nodeView.y = self.height / 2 + 150
+
+    self.nodes[peer.id] = nodeView
+    self.render()
+  })
+
+  // 2. Downstream peers disconnecting
+  root.on('peerdisconnect', function (peer) {
+    var nodeView = self.nodes[peer.id]
+    // Only remove if it's a remote model (don't remove locally created nodes)
+    if (nodeView && nodeView.model instanceof RemotePeerModel) {
+      console.log('Removing downstream peer visualization:', peer.id)
+      nodeView.destroy()
+    }
+  })
+
+  // 3. Upstream connection (our parent)
+  root.on('connect', function (peer) {
+    if (!peer) return // connected as root
+    if (self.nodes[peer.id]) return
+
+    console.log('Visualizing upstream peer:', peer.id)
+    // For upstream, WE are the downstream
+    var remoteModel = new RemotePeerModel(peer, { upstream: null })
+    var nodeView = new NodeView(self, remoteModel)
+
+    // Position upstream node above the local node
+    nodeView.x = self.width / 2
+    nodeView.y = self.height / 2 - 150
+
+    self.nodes[peer.id] = nodeView
+    self.render()
+  })
 }
 
 GraphView.prototype.render = function () {
@@ -224,4 +274,34 @@ GraphView.prototype._onclick = function (evt) {
   node.y = evt.clientY
 
   this.render()
+}
+
+// --- RemotePeerModel ---
+// Minimal implementation of the fireflower node interface for remote peers
+function RemotePeerModel (peer, opts) {
+  this.id = peer.id
+  this.state = 'connected'
+  this.transport = peer.transport || 'p2p' // assume p2p unless told otherwise
+  this.upstream = opts.upstream || null
+  this.downstream = {}
+  this.opts = opts
+
+  // Minimal event emitter
+  this._listeners = {}
+}
+
+RemotePeerModel.prototype.on = function (event, cb) {
+  if (!this._listeners[event]) this._listeners[event] = []
+  this._listeners[event].push(cb)
+}
+
+RemotePeerModel.prototype.emit = function (event, data) {
+  if (this._listeners[event]) {
+    this._listeners[event].forEach(function (cb) { cb(data) })
+  }
+}
+
+RemotePeerModel.prototype.disconnect = function () {
+  this.state = 'disconnected'
+  this.emit('statechange')
 }
