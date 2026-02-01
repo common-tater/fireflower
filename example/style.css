@@ -288,7 +288,7 @@ body {
 
 /* Legend panel */
 .ui-legend {
-  bottom: 20px;
+  bottom: 170px;
   left: 24px;
   display: flex;
   flex-direction: column;
@@ -335,7 +335,7 @@ body {
 
 /* Stats panel */
 .ui-stats {
-  bottom: 20px;
+  bottom: 170px;
   right: 24px;
   display: flex;
   flex-direction: column;
@@ -370,4 +370,31 @@ body {
   color: #aaa;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Debug console ── */
+#debug-console {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 150px;
+  background: rgba(10, 10, 14, 0.85);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: #7a7a7a;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-y: auto;
+  padding: 8px 14px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+#debug-console .debug-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
