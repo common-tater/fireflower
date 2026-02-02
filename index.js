@@ -281,6 +281,13 @@ Node.prototype._onconfig = function (snapshot) {
   // Track server capacity state
   this._serverAtCapacity = !!(data && data.serverAtCapacity)
 
+  // Explicitly sync serverCapacity since deepMerge won't unset it if key is missing
+  if (data && data.serverCapacity !== undefined) {
+    this.opts.serverCapacity = data.serverCapacity
+  } else {
+    delete this.opts.serverCapacity
+  }
+
   // Root reduces K to 0 when the server is online — peers should connect
   // through the relay server, not consume root's bandwidth directly.
   // The server gets a free slot (doesn't count toward K), so root ends up
@@ -605,7 +612,7 @@ Node.prototype._onresponse = function (snapshot) {
   if (this.serverFirst && !this.serverOnly) {
     var elapsed = Date.now() - this._responseWindowStart
     var remaining = 1500 - elapsed
-    delay = remaining > 250 ? 250 : (remaining > 50 ? remaining : 50)
+    delay = remaining > 500 ? 500 : (remaining > 50 ? remaining : 50)
   } else if (this.isServer) {
     // Relay server needs a longer window to ensure root's response arrives.
     // The server uses serverFirst=false (it IS the server) but must still

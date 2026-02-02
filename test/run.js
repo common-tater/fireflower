@@ -45,7 +45,9 @@ var scenarios = [
   { name: 'Concurrent Direct Server Reconnects (Multiple Orphans)', fn: scenario29 },
   { name: 'Direct Server Reconnect Blocked by Server Capacity', fn: scenario30 },
   { name: 'Ancestor Chain Integrity After Direct Server Reconnect', fn: scenario31 },
-  { name: 'Root Protection: Nodes Connect Through Relay, Not Root', fn: scenario32 }
+  { name: 'Root Protection: Nodes Connect Through Relay, Not Root', fn: scenario32 },
+  { name: 'Deep Line Recovery (K=1)', fn: scenario33 },
+  { name: 'Relay Server Restart Handling', fn: scenario34 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -1393,6 +1395,73 @@ async function scenario32 (page) {
     'No added node should be a direct child of root when relay is online, got ' + directRootChildren)
 
   h.log('  Root protection verified: all nodes connected through relay, not directly to root')
+}
+
+async function scenario33 (page) {
+  // Deep Line Recovery: Force a linear chain (K=1), disconnect mid-chain, verify recovery.
+  await h.setK(page, 1) // Force line for P2P nodes
+  await h.setServerEnabled(page, true) // Enable server for fallback recovery
+  await h.setServerCapacity(page, 1) // Force line for Server (prevent it from swallowing all nodes)
+  await h.wait(2000)
+
+  // Add 4 nodes (Root -> A -> B -> C -> D)
+  var ids = await h.addNodes(page, 4, { p2pUpgradeInterval: 5000 })
+  await h.waitForAllConnected(page, 5, 45000)
+
+  // Find ANY node that has children (that isn't root)
+  var states = await h.getNodeStates(page)
+  var target = ids.find(function (id) {
+    return states[id] && !states[id].isRoot && states[id].connectedDownstreamCount > 0
+  })
+
+  if (!target) {
+    throw new Error('Could not find a valid target node to disconnect')
+  }
+
+  h.log('  Disconnecting node ' + target.slice(-5) + ' (level 2)...')
+  await h.disconnectNode(page, target)
+
+  // Descendants should recover (via server fallback then P2P)
+  await h.waitForAll(page, function (states) {
+    var living = Object.keys(states).filter(function (id) { return id !== target })
+    return living.every(function (id) { return states[id].state === 'connected' })
+  }, 'descendants reconnect', 45000)
+
+  h.log('  Linear chain recovered')
+}
+
+async function scenario34 (page, ctx) {
+  // Relay Server Restart: verify system resilience to server crash/restart.
+  // Use Force Server so nodes depend on the relay, then kill it.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.setForceServer(page, true)
+  await h.setServerCapacity(page, null) // ensure no residual capacity limit
+  await h.wait(2000)
+
+  await h.addNodes(page, 3)
+  await h.waitForAllConnected(page, 4)
+
+  h.log('  Nodes connected on server, killing relay process...')
+  ctx.relayProcess.kill('SIGKILL')
+  await h.wait(2000)
+
+  // Verify nodes disconnect (since they are forced to server)
+  await h.waitForAll(page, function (states) {
+    var nonRoot = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    return nonRoot.every(function (id) { return states[id].state !== 'connected' })
+  }, 'nodes disconnect when relay dies', 15000)
+  h.log('  Nodes disconnected as expected')
+
+  h.log('  Restarting relay...')
+  ctx.relayProcess = startRelayServer()
+  await h.wait(3000)
+
+  // Verify they reconnect
+  await h.waitForAllConnected(page, 4, 30000)
+  h.log('  Nodes reconnected to new relay instance')
+
+  await h.setForceServer(page, false)
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────
