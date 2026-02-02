@@ -129,10 +129,11 @@ function getConnectedCount () {
 }
 
 function updateServerCapacityState () {
-  if (!nodeConnected || !serverCapacity) return
+  var cap = node.opts.serverCapacity
+  if (!nodeConnected || cap == null) return
 
   var connectedCount = getConnectedCount()
-  var atCapacity = connectedCount >= serverCapacity
+  var atCapacity = connectedCount >= cap
   var capacityRef = ref(firebase.db, firebasePath + '/configuration/serverAtCapacity')
   set(capacityRef, atCapacity)
   onDisconnect(capacityRef).remove()
@@ -141,9 +142,13 @@ function updateServerCapacityState () {
 function publishServerPresence () {
   var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
   set(serverUrlConfigRef, serverUrl)
-  // Auto-remove serverUrl if Firebase connection drops (process kill, crash, etc.)
+  // Publish server node ID so clients can build complete _serverInfo for direct reconnect
+  var serverIdConfigRef = ref(firebase.db, firebasePath + '/configuration/serverId')
+  set(serverIdConfigRef, node.id)
+  // Auto-remove serverUrl/serverId if Firebase connection drops (process kill, crash, etc.)
   // onDisconnect is one-shot — re-register each time Firebase reconnects
   onDisconnect(serverUrlConfigRef).remove()
+  onDisconnect(serverIdConfigRef).remove()
 
   // Auto-remove server report on Firebase disconnect
   var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
@@ -164,9 +169,11 @@ node.on('connect', function () {
 
 node.on('disconnect', function () {
   nodeConnected = false
-  // Remove serverUrl from config when server disconnects
+  // Remove serverUrl and serverId from config when server disconnects
   var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
   remove(serverUrlConfigRef)
+  var serverIdConfigRef = ref(firebase.db, firebasePath + '/configuration/serverId')
+  remove(serverIdConfigRef)
   // Remove server report
   var reportRef = ref(firebase.db, firebasePath + '/reports/' + node.id)
   remove(reportRef)
@@ -264,9 +271,10 @@ onValue(serverCapacityConfigRef, function (snapshot) {
     node.opts.serverCapacity = capacity
     console.log('Server capacity updated from config:', capacity)
     updateServerCapacityState()
-  } else if (serverCapacity) {
+  } else {
     // Fall back to command line/env var if Firebase config is null
-    node.opts.serverCapacity = serverCapacity
+    node.opts.serverCapacity = serverCapacity || null
+    updateServerCapacityState()
   }
 })
 

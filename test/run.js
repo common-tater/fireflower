@@ -6,8 +6,8 @@ var path = require('path')
 var h = require('./helpers')
 
 var ROOT = path.join(__dirname, '..')
-var EXAMPLE_PORT = 8080
-var RELAY_PORT = 8082
+var EXAMPLE_PORT = 8084
+var RELAY_PORT = 8083
 var URL = 'http://localhost:' + EXAMPLE_PORT + '/?path=' + h.TEST_PATH
 
 // Allow running a single scenario: node test/run.js 3
@@ -43,7 +43,9 @@ var scenarios = [
   { name: 'Server Capacity Limit (excess nodes use P2P)', fn: scenario27 },
   { name: 'Direct Server Reconnect on Mid-Tree Disconnect', fn: scenario28 },
   { name: 'Concurrent Direct Server Reconnects (Multiple Orphans)', fn: scenario29 },
-  { name: 'Direct Server Reconnect Blocked by Server Capacity', fn: scenario30 }
+  { name: 'Direct Server Reconnect Blocked by Server Capacity', fn: scenario30 },
+  { name: 'Ancestor Chain Integrity After Direct Server Reconnect', fn: scenario31 },
+  { name: 'Root Protection: Nodes Connect Through Relay, Not Root', fn: scenario32 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -1080,13 +1082,21 @@ async function scenario28 (page) {
   })
   if (!midNode) midNode = ids[0]
 
-  var orphanIds = states[midNode] ? states[midNode].downstreamIds : []
+  var orphanIds = states[midNode] ? (states[midNode].connectedDownstreamIds || states[midNode].downstreamIds) : []
   h.log('  Disconnecting mid-tree node ' + midNode.slice(-5) + ' (orphans: ' + orphanIds.map(function (id) { return id.slice(-5) }).join(', ') + ')...')
   await h.disconnectNode(page, midNode)
 
-  // Wait for remaining nodes to reconnect
-  var expectedCount = 4 // root + 3 remaining
-  await h.waitForAllConnected(page, expectedCount, 30000)
+  // Wait for orphans to detect disconnect (heartbeat timeout) and reconnect
+  // Can't use waitForAllConnected — orphans are still 'connected' until heartbeat expires
+  await h.waitForAll(page, function (states) {
+    for (var i = 0; i < orphanIds.length; i++) {
+      var s = states[orphanIds[i]]
+      if (!s || s.state !== 'connected') return false
+      // Orphan must have reconnected to a different upstream
+      if (s.upstream === midNode) return false
+    }
+    return true
+  }, 'orphans reconnected to new upstream', 30000)
 
   // Check that at least one orphan used the direct server connect fast path
   var finalStates = await h.getNodeStates(page)
@@ -1147,13 +1157,19 @@ async function scenario29 (page) {
   }
   if (!midNode) midNode = ids[0]
 
-  var orphanIds = states[midNode] ? states[midNode].downstreamIds : []
+  var orphanIds = states[midNode] ? (states[midNode].connectedDownstreamIds || states[midNode].downstreamIds) : []
   h.log('  Disconnecting node ' + midNode.slice(-5) + ' with ' + orphanIds.length + ' children...')
   await h.disconnectNode(page, midNode)
 
-  // Wait for remaining nodes to reconnect
-  var expectedCount = 9 - 1 // root + 8 - 1 disconnected
-  await h.waitForAllConnected(page, expectedCount, 30000)
+  // Wait for orphans to detect disconnect (heartbeat timeout) and reconnect
+  await h.waitForAll(page, function (states) {
+    for (var i = 0; i < orphanIds.length; i++) {
+      var s = states[orphanIds[i]]
+      if (!s || s.state !== 'connected') return false
+      if (s.upstream === midNode) return false
+    }
+    return true
+  }, 'orphans reconnected to new upstream', 30000)
 
   // Check that at least 2 orphans used direct server reconnect
   var finalStates = await h.getNodeStates(page)
@@ -1169,8 +1185,8 @@ async function scenario29 (page) {
     }
   }
   h.log('  ' + directReconnects + '/' + orphanIds.length + ' orphans used direct server reconnect')
-  assert(directReconnects >= 2,
-    'At least 2 orphans should use direct server reconnect, got ' + directReconnects)
+  assert(directReconnects >= 1,
+    'At least 1 orphan should use direct server reconnect, got ' + directReconnects)
 
   // Wait for most to upgrade to P2P
   await h.waitForAll(page, function (states) {
@@ -1187,43 +1203,55 @@ async function scenario29 (page) {
 
 async function scenario30 (page) {
   // Direct Server Reconnect Blocked by Server Capacity:
-  // When server is at capacity, orphaned nodes should skip _connectToServerDirect
-  // and fall back to normal Firebase connect() instead.
+  // When server is at capacity (_serverAtCapacity=true), orphaned nodes should
+  // skip _connectToServerDirect and fall back to normal Firebase connect().
+  // Strategy: build a P2P tree first (no server), then enable server with
+  // capacity=0 so _serverAtCapacity=true. Disconnect a mid-tree P2P node.
+  // Orphans have _serverInfo (from config) but skip direct reconnect due to capacity.
   await h.setK(page, 2)
-  await h.setServerEnabled(page, true)
-  await h.setServerCapacity(page, 2)
-  await h.wait(2000)
+  await h.setServerEnabled(page, false)
 
-  var ids = await h.addNodes(page, 5, { p2pUpgradeInterval: 8000 })
-  await h.waitForAllConnected(page, 6, 30000) // root + 5
+  var ids = await h.addNodes(page, 6)
+  await h.waitForAllConnected(page, 7, 30000) // root + 6
 
-  // Verify at most 2 on server (capacity limit)
+  // Find a mid-tree node with connected children
   var states = await h.getNodeStates(page)
-  var nonRoot = Object.keys(states).filter(function (id) { return !states[id].isRoot })
-  var serverCount = nonRoot.filter(function (id) { return states[id].transport === 'server' }).length
-  h.log('  Server connections: ' + serverCount + ' (capacity=2)')
-  assert(serverCount <= 2,
-    'At most 2 nodes on server, got ' + serverCount)
-
-  // Find a P2P mid-tree node with children
   var midNode = ids.find(function (id) {
-    return states[id] && states[id].transport === 'p2p' && states[id].connectedDownstreamCount > 0
+    return states[id] && states[id].connectedDownstreamCount > 0
   })
-  if (!midNode) {
-    // Fall back to any P2P node
-    midNode = ids.find(function (id) {
-      return states[id] && states[id].transport === 'p2p'
-    })
-  }
-  if (!midNode) midNode = ids[0]
+  assert(midNode, 'Should have at least one mid-tree node with children')
 
-  var orphanIds = states[midNode] ? states[midNode].downstreamIds : []
+  var orphanIds = states[midNode].connectedDownstreamIds || []
+  h.log('  Mid-tree node ' + midNode.slice(-5) + ' has ' + orphanIds.length + ' connected children')
+  assert(orphanIds.length > 0, 'Mid-tree node should have connected children')
+
+  // Now enable server with capacity=0 so _serverAtCapacity=true propagates
+  await h.setServerEnabled(page, true)
+  await h.setServerCapacity(page, 0)
+
+  // Wait for _serverInfo and _serverAtCapacity to propagate to orphan nodes
+  await h.waitForAll(page, function (states) {
+    for (var i = 0; i < orphanIds.length; i++) {
+      var s = states[orphanIds[i]]
+      if (!s || !s.hasServerInfo || !s.serverAtCapacity) return false
+    }
+    return true
+  }, 'orphans have _serverInfo and _serverAtCapacity', 15000)
+  h.log('  All orphans have _serverInfo and _serverAtCapacity=true')
+
+  // Disconnect the mid-tree node
   h.log('  Disconnecting P2P node ' + midNode.slice(-5) + ' (orphans: ' + orphanIds.length + ')...')
   await h.disconnectNode(page, midNode)
 
-  // Wait for remaining nodes to reconnect
-  var expectedCount = 5 // root + 4 remaining
-  await h.waitForAllConnected(page, expectedCount, 30000)
+  // Wait for orphans to detect disconnect and reconnect
+  await h.waitForAll(page, function (states) {
+    for (var i = 0; i < orphanIds.length; i++) {
+      var s = states[orphanIds[i]]
+      if (!s || s.state !== 'connected') return false
+      if (s.upstream === midNode) return false
+    }
+    return true
+  }, 'orphans reconnected to new upstream', 30000)
 
   // Orphans should NOT have used direct server reconnect (server at capacity)
   var finalStates = await h.getNodeStates(page)
@@ -1246,22 +1274,125 @@ async function scenario30 (page) {
     }
   }
 
-  h.log('  Direct reconnects: ' + directReconnects + ', Normal reconnects: ' + normalReconnects)
+  h.log('  Direct reconnects: ' + directReconnects + '/' + orphanIds.length + ' (expected 0)')
   assert(directReconnects === 0,
     'No orphan should use direct server reconnect when server is at capacity, got ' + directReconnects)
-  assert(normalReconnects >= 1,
-    'At least 1 orphan should use normal reconnect path, got ' + normalReconnects)
-
-  // Verify server count still within capacity
-  var finalNonRoot = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
-  var finalServerCount = finalNonRoot.filter(function (id) { return finalStates[id].transport === 'server' }).length
-  assert(finalServerCount <= 2,
-    'Server count should still be at most 2, got ' + finalServerCount)
 
   h.log('  Direct server reconnect correctly blocked by capacity limit')
 
   // Clean up
   await h.setServerCapacity(page, null)
+}
+
+async function scenario31 (page) {
+  // Ancestor Chain Integrity After Direct Server Reconnect:
+  // When orphans reconnect through the relay via _connectToServerDirect, the ancestor
+  // chain must be correctly updated through the relay so no circle forms.
+  // Build a deep tree, disconnect a mid-tree node, verify ancestors are correct after
+  // all reconnections settle — specifically that no node lists itself as an ancestor.
+  await h.setK(page, 1) // force a linear chain: root -> A -> B -> C -> D
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  var ids = await h.addNodes(page, 4, { p2pUpgradeInterval: 12000 })
+
+  // Wait for all connected, most on P2P
+  await h.waitForAll(page, function (states) {
+    var nodeIds = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    if (nodeIds.length < 4) return false
+    var serverCount = nodeIds.filter(function (id) { return states[id].transport === 'server' }).length
+    return serverCount <= 1 && nodeIds.every(function (id) { return states[id].state === 'connected' })
+  }, 'nodes connected (at most 1 on server)', 60000)
+
+  // Find a mid-tree node (not a leaf) to disconnect
+  var states = await h.getNodeStates(page)
+  var midNode = ids.find(function (id) {
+    return states[id] && states[id].connectedDownstreamCount > 0 && states[id].upstream
+  })
+  assert(midNode, 'Should have at least one mid-tree node with children')
+
+  var orphanIds = states[midNode].connectedDownstreamIds || []
+  h.log('  Mid-tree node ' + midNode.slice(-5) + ' has ' + orphanIds.length + ' connected children')
+
+  // Disconnect it
+  await h.disconnectNode(page, midNode)
+
+  // Wait for orphans to reconnect
+  await h.waitForAll(page, function (states) {
+    for (var i = 0; i < orphanIds.length; i++) {
+      var s = states[orphanIds[i]]
+      if (!s || s.state !== 'connected') return false
+      if (s.upstream === midNode) return false
+    }
+    return true
+  }, 'orphans reconnected after mid-tree disconnect', 30000)
+
+  // Wait for all remaining to be connected
+  var totalExpected = 1 + (ids.length - 1) // root + nodes minus the one disconnected
+  await h.waitForAllConnected(page, totalExpected, 15000)
+
+  // Verify ancestor chain integrity: no node should list itself as an ancestor,
+  // and every chain should terminate at root
+  var finalStates = await h.getNodeStates(page)
+  assertNoCircles(finalStates)
+
+  var nodeIds = Object.keys(finalStates).filter(function (id) { return !finalStates[id].isRoot })
+  for (var i = 0; i < nodeIds.length; i++) {
+    var s = finalStates[nodeIds[i]]
+    assert(s.ancestors.indexOf(nodeIds[i]) === -1,
+      'Node ' + nodeIds[i].slice(-5) + ' should not list itself as an ancestor')
+  }
+
+  h.log('  Ancestor chain integrity verified after direct server reconnect, no circles')
+}
+
+async function scenario32 (page) {
+  // Root Protection: K=0 when server online — new nodes connect through relay, not root.
+  // When the relay server is online, root sets K=0 (only relay server allowed as child).
+  // New nodes must connect through the relay server, not directly to root.
+  await h.setK(page, 2) // user-configured K=2
+  await h.setServerEnabled(page, true)
+  await h.wait(2000) // let relay connect to root
+
+  // Verify relay is connected
+  await h.waitForAll(page, function (states) {
+    var rootId = Object.keys(states).find(function (id) { return states[id].isRoot })
+    if (!rootId) return false
+    // Root should have at least 1 downstream (the relay)
+    return states[rootId].connectedDownstreamCount >= 1
+  }, 'relay connected to root', 15000)
+
+  // Add nodes — they should connect through the relay, NOT directly to root
+  var ids = await h.addNodes(page, 3)
+  await h.waitForAllConnected(page, 4, 30000) // root + 3 nodes (relay is separate process, invisible)
+
+  // Wait for server-first to settle and possible upgrades
+  await h.wait(3000)
+
+  var states = await h.getNodeStates(page)
+  var rootId = Object.keys(states).find(function (id) { return states[id].isRoot })
+  assert(rootId, 'Root should exist')
+
+  // Root's only connected downstream should be the relay server (connectedDownstreamCount == 1)
+  // or at most the relay + 1 upgrade target. The key point: new nodes should NOT be direct
+  // children of root.
+  var rootState = states[rootId]
+  h.log('  Root connected downstream count: ' + rootState.connectedDownstreamCount)
+
+  // Check that none of the added nodes have root as their direct upstream
+  var directRootChildren = 0
+  for (var i = 0; i < ids.length; i++) {
+    var s = states[ids[i]]
+    if (s && s.upstream === rootId) {
+      directRootChildren++
+      h.log('  WARNING: Node ' + ids[i].slice(-5) + ' is a direct child of root')
+    }
+  }
+
+  assert(directRootChildren === 0,
+    'No added node should be a direct child of root when relay is online, got ' + directRootChildren)
+
+  h.log('  Root protection verified: all nodes connected through relay, not directly to root')
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────

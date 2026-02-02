@@ -67,7 +67,7 @@ async function getNodeStates (page) {
         hasServerFallback: !!root.model._serverFallback,
         hasServerInfo: !!root.model._serverInfo,
         ancestors: root.model._ancestors || [],
-        debugLog: (root.model._debugLog || []).slice(-20)
+        debugLog: (root.model._debugLog || []).slice(-50)
       }
     }
 
@@ -78,8 +78,12 @@ async function getNodeStates (page) {
       if (!node || !node.model) continue
       if (!node.model._debugLog) continue // skip RemotePeerModel (not a real fireflower node)
       var nodeConnected = 0
+      var nodeConnectedIds = []
       for (var did in (node.model.downstream || {})) {
-        if (node.model.downstream[did].didConnect) nodeConnected++
+        if (node.model.downstream[did].didConnect) {
+          nodeConnected++
+          nodeConnectedIds.push(did)
+        }
       }
       result[id] = {
         id: id,
@@ -89,11 +93,13 @@ async function getNodeStates (page) {
         downstreamCount: Object.keys(node.model.downstream || {}).length,
         connectedDownstreamCount: nodeConnected,
         downstreamIds: Object.keys(node.model.downstream || {}),
+        connectedDownstreamIds: nodeConnectedIds,
         isRoot: false,
         hasServerFallback: !!node.model._serverFallback,
         hasServerInfo: !!node.model._serverInfo,
+        serverAtCapacity: !!node.model._serverAtCapacity,
         ancestors: node.model._ancestors || [],
-        debugLog: (node.model._debugLog || []).slice(-20)
+        debugLog: (node.model._debugLog || []).slice(-50)
       }
     }
     return result
@@ -218,10 +224,10 @@ async function setK (page, value) {
 }
 
 async function setServerCapacity (page, value) {
-  log('  Setting serverCapacity=' + (value || '∞'))
+  log('  Setting serverCapacity=' + (value != null ? value : '∞'))
   await page.evaluate(function (value) {
     var input = document.querySelector('#server-capacity-number input')
-    input.value = value || ''
+    input.value = value != null ? value : ''
     input.dispatchEvent(new Event('change'))
   }, value)
 }

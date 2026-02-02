@@ -273,7 +273,7 @@ Node.prototype._onconfig = function (snapshot) {
 
   // Cache serverUrl from config so all nodes know where the server is
   if (data && data.serverUrl && !this.isServer) {
-    this._serverInfo = { serverUrl: data.serverUrl }
+    this._serverInfo = { id: data.serverId || null, serverUrl: data.serverUrl }
   } else if (!this.isServer && (!data || !data.serverUrl) && !serverEnabled) {
     this._serverInfo = null
   }
