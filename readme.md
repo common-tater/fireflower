@@ -83,7 +83,7 @@ The example app includes a 2D canvas visualization. Open http://localhost:8081 f
 - Node colors reflect health score (green = healthy, red = struggling)
 
 ## Testing
-Automated test suite using Puppeteer with 24 scenarios:
+Automated test suite using Puppeteer with 34 scenarios:
 
 ```
 $ npm test           # Run all scenarios
@@ -119,6 +119,16 @@ Tests launch a visible Chrome browser so you can watch nodes connect in the 2D v
 22. Minimal Server→P2P Switch
 23. Server-First Prefers Server Over P2P Root
 24. Upgrade Skips Root
+25. K Limit Enforced Under Rapid Connections
+26. Server-First Reconnection After Mid-Tree Disconnect
+27. Server Capacity Limit
+28. Direct Server Reconnect on Mid-Tree Disconnect
+29. Concurrent Direct Server Reconnects
+30. Direct Server Reconnect Blocked by Server Capacity
+31. Ancestor Chain Integrity After Direct Server Reconnect
+32. Root Protection: Nodes Connect Through Relay, Not Root
+33. Deep Line Recovery (K=1)
+34. Relay Server Restart Handling
 
 ## Build
 ```
@@ -238,6 +248,9 @@ Tested on modern browsers with WebRTC support:
 * Firefox
 * Safari (desktop and iOS)
 * Edge
+
+## Roadmap
+See [ROADMAP.md](ROADMAP.md) for future plans, ideas, and considerations (video support, adaptive upgrades, test coverage).
 
 ## License
 MIT
