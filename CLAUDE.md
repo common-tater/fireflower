@@ -10,7 +10,7 @@ P2P broadcasting system using WebRTC data channels in a K-ary tree topology, wit
 - **relay-server.js** — Node.js WebSocket relay server that joins the tree as a regular node (level 1 child of root).
 - **example/** — Browser demo app with 2D visualization. Shows server node status (green=online, red=offline).
 - **example/src/graph.js** — 2D graph view. Watches Firebase reports for server node presence and `serverEnabled` config. Shows red "OFFLINE" indicator when server is enabled but not reporting.
-- **[fireflower-visualizer](https://github.com/common-tater/fireflower-visualizer)** — Separate repo. 3D Three.js visualization of the tree, reads reports from Firebase. Clone alongside this repo and run on port 8081.
+- **[fireflower-visualizer](https://github.com/common-tater/fireflower-visualizer)** — Separate repo. 3D Three.js visualization of the tree, reads reports from Firebase. Clone alongside this repo and run on port 8081. Features diagnostic overlays for node health, network stats (max depth, disconnected count), and detailed node info on click.
 
 ## Key Patterns
 
@@ -206,6 +206,24 @@ When `_connectToServerDirect` connects to the relay server, there's no pending `
 ### serverOnly race condition: config change arrives after server disconnect
 When force-server is toggled OFF and the server is disabled, two things happen: (1) the relay server shuts down, closing WebSocket connections instantly, and (2) the Firebase config change propagates to all nodes. The WebSocket close is immediate but the Firebase config takes a network round-trip. A node connected via server detects the disconnect first and calls `_dorequest` with stale `serverOnly=true`. Root sees the request but skips it (`request.serverOnly && !this.isServer`). Seconds later the config change arrives, setting `this.serverOnly = false`, but `_onconfig` only handled this transition when `state === 'connected'` and `transport === 'server'` — not when in `requesting` state. Fix: add a branch in `_onconfig` that detects `wasServerOnly && !this.serverOnly && this.state === 'requesting'` and restarts the request with the corrected `serverOnly=false` flag. The old request (with `serverOnly=true`) is removed from Firebase and a new one is published that P2P nodes can respond to.
 
+### Relay server must publish serverId for direct server reconnect
+`_connectToServerDirect` needs `this._serverInfo.id` (the relay server's node ID) to set `transport.id` on the created upstream peer. When `_serverInfo` was populated only from Firebase config (`_onconfig`), it only had `{ serverUrl }` — no `id`. The relay server now writes its node ID to `tree/configuration/serverId` alongside `serverUrl`, and removes it on disconnect (with `onDisconnect` backup). `_onconfig` builds `_serverInfo` as `{ id: data.serverId || null, serverUrl: data.serverUrl }`.
+
+### Relay server updateServerCapacityState must use node.opts.serverCapacity
+The relay server's `updateServerCapacityState` function must read capacity from `node.opts.serverCapacity` (updated by the Firebase config watcher), not the local `serverCapacity` variable (set from command line args only). The Firebase watcher sets `node.opts.serverCapacity` on config changes but the local variable never updates. Also, the guard must use `cap == null` (not `!cap`) — `!0` is true, so `serverCapacity=0` was silently skipped, preventing `serverAtCapacity=true` from being written to Firebase.
+
+### setServerCapacity helper must handle 0 correctly
+The test helper `setServerCapacity(page, value)` used `value || '∞'` for logging and `value || ''` for the input value. JavaScript's `||` treats `0` as falsy, so `setServerCapacity(page, 0)` displayed as `∞` and sent empty string (null) to Firebase. Fix: use `value != null ? value : '∞'` and `value != null ? value : ''`.
+
+### Test assertions on debug log entries are fragile
+The `_debugLog` ring buffer (50 entries) rotates entries when many events occur after reconnection (mask updates, config changes, request/response cycles). Tests checking for specific debug log entries (like `scheduling reconnect delay=`) may fail because the entry was pushed out. Prefer assertions on observable state (e.g., `directReconnects === 0` + `waitForAll` proving reconnection succeeded) over matching specific debug log strings. The `getNodeStates` helper reads `.slice(-50)` to capture the full ring buffer.
+
+### Test timing: waitForAllConnected vs waitForAll for disconnect detection
+`waitForAllConnected` checks that all nodes have `state === 'connected'`. After disconnecting a mid-tree node, its orphaned children are still in `connected` state until heartbeat timeout fires (~4s). `waitForAllConnected` returns immediately (all nodes report connected). By the time the assertion runs, the orphans haven't entered `_onupstreamDisconnect` yet, so their debug logs don't show reconnection entries. Fix: use `waitForAll` with a predicate that checks orphans have reconnected to a *different* upstream than the disconnected node.
+
+### connectedDownstreamIds vs downstreamIds in test helpers
+`downstreamIds` (from `Object.keys(node.model.downstream)`) includes pending peers still in ICE negotiation that never connect. These are stale entries from nodes that accepted a different response. Using `downstreamIds` to identify orphan children includes nodes that were never actually children. The `connectedDownstreamIds` field filters to only peers with `didConnect: true`, giving the actual connected children.
+
 ## Dev Environment Setup
 
 ### Firebase project
@@ -256,12 +274,12 @@ node test/run.js 3 # Run only scenario 3
 
 The test runner:
 1. Builds the example app
-2. Starts the example server (port 8080) and relay server (port 8082) as child processes
+2. Starts the example server (port 8084) and relay server (port 8083) as child processes
 3. Launches Chrome with `headless: false` so you can watch the 2D visualizer
 4. Runs each scenario sequentially with automatic reset between them
 5. Reports pass/fail for each scenario
 
-Tests use the isolated Firebase path `test-tree` (not the default `tree`) so they don't interfere with manual testing. The relay server is also started with `--firebase-path test-tree`.
+Tests use isolated ports (8084 for example server, 8083 for relay) and the Firebase path `test-tree` so they don't interfere with manual testing on ports 8080/8082 with the default `tree` path. The test suite can run in parallel with manual testing.
 
 Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to watch tests in 3D.
 
@@ -297,3 +315,8 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 25. K Limit Enforced Under Rapid Connections — 8 rapid nodes, no node exceeds K=2 connected children
 26. Server-First Reconnection After Mid-Tree Disconnect — orphans use server-first (direct or Firebase), most upgrade to P2P (at most 1 stays on server)
 27. Server Capacity Limit — excess nodes beyond serverCapacity use P2P instead of server
+28. Direct Server Reconnect on Mid-Tree Disconnect — orphans with cached `_serverInfo` use `_connectToServerDirect` fast path, verified via debug log
+29. Concurrent Direct Server Reconnects — multiple orphans from same parent use direct server reconnect simultaneously, relay handles cold WebSocket connections
+30. Direct Server Reconnect Blocked by Server Capacity — when `_serverAtCapacity=true`, orphans skip fast path and use normal Firebase reconnect
+31. Ancestor Chain Integrity After Direct Server Reconnect — verify no node lists itself as ancestor and no circles form after orphans reconnect through relay
+32. Root Protection: Nodes Connect Through Relay, Not Root — when relay is online (root K=0), new nodes connect through relay, never directly to root
