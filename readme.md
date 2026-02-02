@@ -83,7 +83,7 @@ The example app includes a 2D canvas visualization. Open http://localhost:8081 f
 - Node colors reflect health score (green = healthy, red = struggling)
 
 ## Testing
-Automated test suite using Puppeteer with 34 scenarios:
+Automated test suite using Puppeteer with 36 scenarios:
 
 ```
 $ npm test           # Run all scenarios
@@ -129,6 +129,8 @@ Tests launch a visible Chrome browser so you can watch nodes connect in the 2D v
 32. Root Protection: Nodes Connect Through Relay, Not Root
 33. Deep Line Recovery (K=1)
 34. Relay Server Restart Handling
+35. K Decrease Prunes Excess Children
+36. Cascade Disconnect During Reconnection
 
 ## Build
 ```

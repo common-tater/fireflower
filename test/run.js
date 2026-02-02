@@ -47,7 +47,9 @@ var scenarios = [
   { name: 'Ancestor Chain Integrity After Direct Server Reconnect', fn: scenario31 },
   { name: 'Root Protection: Nodes Connect Through Relay, Not Root', fn: scenario32 },
   { name: 'Deep Line Recovery (K=1)', fn: scenario33 },
-  { name: 'Relay Server Restart Handling', fn: scenario34 }
+  { name: 'Relay Server Restart Handling', fn: scenario34 },
+  { name: 'K Decrease Prunes Excess Children', fn: scenario35 },
+  { name: 'Cascade Disconnect During Reconnection', fn: scenario36 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -1462,6 +1464,104 @@ async function scenario34 (page, ctx) {
   h.log('  Nodes reconnected to new relay instance')
 
   await h.setForceServer(page, false)
+}
+
+async function scenario35 (page) {
+  // K Decrease Prunes Excess Children:
+  // Build a full tree at K=3, then reduce K to 1. Pruned children must
+  // reconnect and the tree must stabilize with no node exceeding K=1.
+  await h.setK(page, 3)
+  await h.setServerEnabled(page, false)
+  await h.wait(1000)
+
+  var ids = await h.addNodes(page, 6)
+  await h.waitForAllConnected(page, 7)
+
+  var statesBefore = await h.getNodeStates(page)
+  var root = Object.keys(statesBefore).find(function (id) { return statesBefore[id].isRoot })
+  h.log('  6 nodes connected with K=3, root downstream=' + statesBefore[root].connectedDownstreamCount)
+
+  h.log('  Reducing K from 3 to 1...')
+  await h.setK(page, 1)
+
+  // All nodes should reconnect and stabilize — tree becomes a chain
+  await h.waitForAll(page, function (states) {
+    var allIds = Object.keys(states)
+    if (!allIds.every(function (id) { return states[id].state === 'connected' })) return false
+    // No node should exceed K=1 connected children
+    for (var i = 0; i < allIds.length; i++) {
+      if (states[allIds[i]].connectedDownstreamCount > 1) return false
+    }
+    return true
+  }, 'all nodes connected with K=1 (no node exceeds K)', 60000)
+
+  var statesAfter = await h.getNodeStates(page)
+  assertNoCircles(statesAfter)
+
+  // Verify total node count is preserved
+  var totalAfter = Object.keys(statesAfter).length
+  assert(totalAfter === 7, 'Expected 7 nodes after K decrease, got ' + totalAfter)
+
+  h.log('  K decrease handled: tree restructured to K=1, no circles, all ' + totalAfter + ' nodes connected')
+}
+
+async function scenario36 (page) {
+  // Cascade Disconnect During Reconnection:
+  // Disconnect a mid-tree node, then disconnect a second node while the
+  // first set of orphans is still reconnecting. All nodes must recover.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  var ids = await h.addNodes(page, 7, { p2pUpgradeInterval: 8000 })
+  await h.waitForAllConnected(page, 8)
+
+  // Wait for most to be on P2P so the disconnects test P2P reconnection
+  await h.waitForAll(page, function (states) {
+    var nonRoot = Object.keys(states).filter(function (id) { return !states[id].isRoot })
+    var p2pCount = nonRoot.filter(function (id) { return states[id].transport === 'p2p' }).length
+    return p2pCount >= 5 && nonRoot.every(function (id) { return states[id].state === 'connected' })
+  }, 'most nodes on P2P', 60000)
+
+  // Find two parent nodes at different levels if possible
+  var states = await h.getNodeStates(page)
+  var parents = ids.filter(function (id) {
+    return states[id] && states[id].connectedDownstreamCount > 0
+  })
+
+  if (parents.length < 2) {
+    throw new Error('Need at least 2 parent nodes, found ' + parents.length)
+  }
+
+  var first = parents[0]
+  var second = parents[1]
+  var removed = [first, second]
+
+  h.log('  Disconnecting ' + first.slice(-5) + ' (has ' + states[first].connectedDownstreamCount + ' children)...')
+  await h.disconnectNode(page, first)
+
+  // Wait just long enough for orphans to start reconnecting, then disconnect the second
+  await h.wait(1500)
+
+  h.log('  Disconnecting ' + second.slice(-5) + ' (has ' + states[second].connectedDownstreamCount + ' children) during reconnection storm...')
+  await h.disconnectNode(page, second)
+
+  var expectedCount = 8 - removed.length
+
+  // All surviving nodes must reconnect
+  await h.waitForAll(page, function (states) {
+    var living = Object.keys(states).filter(function (id) { return removed.indexOf(id) === -1 })
+    return living.length >= expectedCount - 1 &&
+      living.every(function (id) { return states[id].state === 'connected' })
+  }, 'all surviving nodes reconnect after cascade disconnect', 60000)
+
+  var finalStates = await h.getNodeStates(page)
+  assertNoCircles(finalStates)
+
+  var finalCount = Object.keys(finalStates).filter(function (id) {
+    return removed.indexOf(id) === -1 && finalStates[id].state === 'connected'
+  }).length
+  h.log('  Cascade disconnect recovered: ' + finalCount + ' nodes connected, no circles')
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────

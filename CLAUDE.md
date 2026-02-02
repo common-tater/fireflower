@@ -325,3 +325,5 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 32. Root Protection: Nodes Connect Through Relay, Not Root — when relay is online (root K=0), new nodes connect through relay, never directly to root
 33. Deep Line Recovery (K=1) — Verify line topology recovery after mid-chain disconnect (requires setServerCapacity(1) to force line structure).
 34. Relay Server Restart Handling — Verify nodes reconnect to a new relay instance after the server process is killed and restarted.
+35. K Decrease Prunes Excess Children — Reduce K from 3→1 with a full tree, verify pruned children reconnect and no node exceeds new K.
+36. Cascade Disconnect During Reconnection — Disconnect a second parent while orphans from the first are still reconnecting; all nodes must recover with no circles.
