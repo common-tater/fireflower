@@ -14,87 +14,65 @@ showLogin('checking') // Show checking state immediately
 
 function showLogin(state = 'login', user = null, errorMsg = null) {
   var overlay = document.getElementById('login-overlay')
-  if (!overlay) {
-    overlay = document.createElement('div')
-    overlay.id = 'login-overlay'
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);display:flex;justify-content:center;align-items:center;z-index:9999;'
-    document.body.appendChild(overlay)
-  }
+  var form = document.getElementById('login-form')
+  var actionArea = document.getElementById('login-action-area')
+  var title = document.getElementById('login-title')
+  var errorDiv = document.getElementById('login-error')
 
-  overlay.innerHTML = '' // Reset content
+  if (!overlay) return // Should exist in HTML
 
-  var box = document.createElement('div')
-  box.style.cssText = 'background:#222;padding:30px;border-radius:8px;display:flex;flex-direction:column;gap:15px;min-width:320px;box-shadow: 0 4px 6px rgba(0,0,0,0.3);'
+  overlay.classList.remove('hidden')
+
+  // Reset visibility
+  form.classList.add('hidden')
+  actionArea.classList.add('hidden')
 
   if (state === 'checking') {
-    var title = document.createElement('h3')
-    title.innerText = 'Verifying permissions...'
-    title.style.margin = '0'
-    title.style.textAlign = 'center'
-    box.appendChild(title)
+    title.innerText = 'Verifying...'
   }
   else if (state === 'unauthorized') {
-    var title = document.createElement('h3')
     title.innerText = 'Access Denied'
-    title.style.color = '#ff6b6b'
-    title.style.margin = '0'
+    title.style.color = 'var(--color-struggling)'
 
-    var msg = document.createElement('p')
-    msg.innerText = `User ${user ? user.email : ''} is not authorized to access this database.`
-    msg.style.fontSize = '14px'
-    msg.style.opacity = '0.9'
+    actionArea.classList.remove('hidden')
+    var msg = document.getElementById('login-msg')
+    var btn = document.getElementById('login-action-btn')
 
-    var signOutBtn = document.createElement('button')
-    signOutBtn.innerText = 'Sign Out / Retry'
-    signOutBtn.onclick = () => auth.signOut()
-
-    box.appendChild(title)
-    box.appendChild(msg)
-    box.appendChild(signOutBtn)
+    msg.innerText = `User ${user ? user.email : ''} is not authorized.`
+    btn.innerText = 'Sign Out / Retry'
+    btn.onclick = () => {
+      auth.signOut()
+      showLogin('login')
+    }
   }
   else { // 'login'
-    var title = document.createElement('h3')
-    title.innerText = 'Login Required'
-    title.style.margin = '0'
-    title.style.textAlign = 'center'
+    title.innerText = 'Restricted Access'
+    title.style.color = '' // Reset color
 
-    var email = document.createElement('input')
-    email.placeholder = 'Email'
-    email.type = 'email'
-    email.style.padding = '8px'
+    form.classList.remove('hidden')
 
-    var pass = document.createElement('input')
-    pass.placeholder = 'Password'
-    pass.type = 'password'
-    pass.style.padding = '8px'
+    var email = document.getElementById('login-email')
+    var pass = document.getElementById('login-pass')
+    var btn = document.getElementById('login-btn')
 
-    var btn = document.createElement('button')
-    btn.innerText = 'Sign In'
-    btn.style.padding = '8px'
-    btn.style.cursor = 'pointer'
-
-    var errorDiv = document.createElement('div')
-    errorDiv.style.color = '#ff6b6b'
-    errorDiv.style.fontSize = '12px'
     if (errorMsg) errorDiv.innerText = errorMsg
 
+    // Bind click ONLY if not already bound (simple check or simple rebind)
+    // To be safe and simple, we re-bind.
     btn.onclick = () => {
-      errorDiv.innerText = 'Signing in...'
+      errorDiv.innerText = ''
+      btn.style.opacity = '0.5'
+      btn.innerText = 'Signing in...'
       signInWithEmailAndPassword(auth, email.value, pass.value)
-        .catch(e => errorDiv.innerText = e.message)
+        .catch(e => {
+          btn.style.opacity = '1'
+          btn.innerText = 'Sign In'
+          errorDiv.innerText = e.message
+        })
     }
 
-    // Allow Enter key to submit
     pass.onkeyup = (e) => { if(e.key === 'Enter') btn.click() }
-
-    box.appendChild(title)
-    box.appendChild(email)
-    box.appendChild(pass)
-    box.appendChild(btn)
-    box.appendChild(errorDiv)
   }
-
-  overlay.appendChild(box)
 }
 
 onAuthStateChanged(auth, (user) => {
@@ -107,7 +85,7 @@ onAuthStateChanged(auth, (user) => {
     get(child(ref(firebase.db, 'admins'), user.uid))
       .then((snap) => {
         if (snap.val() === true) {
-          if (document.getElementById('login-overlay')) document.getElementById('login-overlay').remove()
+          document.getElementById('login-overlay').classList.add('hidden')
           initApp()
         } else {
           showLogin('unauthorized', user)
@@ -152,6 +130,7 @@ var { remove, set, onValue } = require('firebase/database')
 
 // Reset button: disconnects node, clears Firebase data, prevents reconnect
 var resetBtn = document.querySelector('#reset-btn')
+resetBtn.classList.add('btn-danger') // Start with danger class for hover effect
 resetBtn.addEventListener('click', function () {
   if (resetBtn.classList.contains('disabled')) return
   resetBtn.classList.add('disabled')
@@ -167,7 +146,7 @@ resetBtn.addEventListener('click', function () {
 var controls = document.getElementById('controls')
 var logoutBtn = document.createElement('button')
 logoutBtn.innerText = 'Logout'
-logoutBtn.style.marginLeft = '10px'
+// No inline style needed, CSS handles #controls button
 logoutBtn.addEventListener('click', function() {
   auth.signOut().then(() => {
     location.reload()
