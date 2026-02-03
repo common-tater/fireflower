@@ -30,6 +30,24 @@ Two data channels per connection:
 
 Both channels must be created BEFORE calling `peer.negotiate()` so they are included in the SDP offer.
 
+### Custom channel extension points
+External packages (like fireflower-audio) can add custom data channels without modifying fireflower core:
+- `peerCreated(peer)` — emitted on initiator (parent) before SDP negotiation. Handler can call `peer.createDataChannel(label, options)` to add custom channels that will be in the initial offer.
+- `datachannel(peer, channel)` — emitted on non-initiator (child) when an unknown channel arrives (i.e., not `_default` or `notifications`). Handler can wire `channel.onmessage` and store the channel reference.
+
+Example for unreliable audio channel:
+```javascript
+node.on('peerCreated', (peer) => {
+  peer._audio = peer.createDataChannel('_audio', { ordered: false, maxRetransmits: 0 })
+})
+node.on('datachannel', (peer, channel) => {
+  if (channel.label === '_audio') {
+    peer._audio = channel
+    channel.onmessage = (evt) => handleAudio(peer, evt)
+  }
+})
+```
+
 ### Heartbeat (disconnect detection)
 Parents send `{ type: 'heartbeat', t: <timestamp> }` every 2s over the `notifications` channel. Children have a 4s timeout; if it expires, they close the upstream peer and reconnect. An initial heartbeat timeout is started in `_onupstreamConnect` so that if a parent dies before sending its first heartbeat, the child still detects the failure (rather than sitting forever with no timeout running). The child's `notifications.onmessage` handler checks for `data.type === 'heartbeat'` vs mask updates (which have no `type` field). Heartbeat is purely P2P — no server involvement. Cleanup happens in `_ondownstreamDisconnect`, `_onupstreamDisconnect`, and `disconnect()`.
 

@@ -808,6 +808,8 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       self._onnotificationsOpen(peer)
     }
     peer.requestId = requestId
+    // Allow external packages to create custom channels before negotiation
+    self.emit('peerCreated', peer)
     if (!isServerTransport) {
       peer.negotiate()
     }
@@ -828,6 +830,9 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
         channel.onmessage = function (evt) {
           self._ondata(peer, evt)
         }
+      } else {
+        // Emit for custom channels so external packages can handle them
+        self.emit('datachannel', peer, channel)
       }
     })
   }
@@ -1110,6 +1115,9 @@ Node.prototype._connectServerFallback = function (response) {
       channel.onmessage = function (evt) {
         self._ondata(transport, evt)
       }
+    } else {
+      // Emit for custom channels so external packages can handle them
+      self.emit('datachannel', transport, channel)
     }
   })
 }
@@ -1299,6 +1307,9 @@ Node.prototype._connectToServerDirect = function () {
       channel.onmessage = function (evt) {
         self._ondata(transport, evt)
       }
+    } else {
+      // Emit for custom channels so external packages can handle them
+      self.emit('datachannel', transport, channel)
     }
   })
 }
