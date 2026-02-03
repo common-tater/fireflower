@@ -72,6 +72,7 @@ $ npm run dev
 
 Open http://localhost:8080 in your browser. Click the canvas to add peer nodes and watch the K-ary tree form in real-time. Works on desktop browsers and mobile (Chrome on Android, Safari on iOS).
 
+> **Note:** The example app requires you to sign in with an email account authorized in the `/admins` database node (see **Security Rules** above). The app will prompt you to login automatically.
 Use `?path=<name>` to run on a different Firebase path (default: `tree`). Multiple tabs with different paths are fully independent trees.
 
 ### Relay Server
