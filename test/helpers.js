@@ -295,6 +295,92 @@ async function waitForRootReady (page, timeout) {
   throw new Error('Timeout: root node not ready')
 }
 
+async function startBroadcast (page, interval) {
+  interval = interval || 200
+  await page.evaluate(function (interval) {
+    window._broadcastSeq = window._broadcastSeq || 0
+    window._broadcastTimer = setInterval(function () {
+      if (window.root && window.root.state === 'connected') {
+        window._broadcastSeq++
+        window.root.send(JSON.stringify({ seq: window._broadcastSeq, t: Date.now() }))
+      }
+    }, interval)
+  }, interval)
+}
+
+async function stopBroadcast (page) {
+  return page.evaluate(function () {
+    if (window._broadcastTimer) {
+      clearInterval(window._broadcastTimer)
+      window._broadcastTimer = null
+    }
+    return window._broadcastSeq || 0
+  })
+}
+
+async function setupReceivers (page) {
+  await page.evaluate(function () {
+    var graph = window.graph
+    if (!graph) return
+
+    function wireNode (node) {
+      if (!node || !node.model || node.model._testReceived) return
+      node.model._testReceived = []
+      node.model.on('data', function (data) {
+        try {
+          var msg = JSON.parse(data)
+          node.model._testReceived.push(msg.seq)
+        } catch (e) {}
+      })
+    }
+
+    // Wire root
+    if (graph.root) wireNode(graph.root)
+
+    // Wire all existing nodes
+    for (var id in graph.nodes) {
+      wireNode(graph.nodes[id])
+    }
+
+    // Auto-wire newly added nodes
+    window._receiverWireInterval = setInterval(function () {
+      for (var id in graph.nodes) {
+        wireNode(graph.nodes[id])
+      }
+    }, 200)
+  })
+}
+
+async function teardownReceivers (page) {
+  await page.evaluate(function () {
+    if (window._receiverWireInterval) {
+      clearInterval(window._receiverWireInterval)
+      window._receiverWireInterval = null
+    }
+  })
+}
+
+async function getReceivedMessages (page) {
+  return page.evaluate(function () {
+    var result = {}
+    var graph = window.graph
+    if (!graph) return result
+
+    // Root
+    if (graph.root && graph.root.model && graph.root.model._testReceived) {
+      result[graph.root.id] = graph.root.model._testReceived.slice()
+    }
+
+    for (var id in graph.nodes) {
+      var node = graph.nodes[id]
+      if (node && node.model && node.model._testReceived) {
+        result[id] = node.model._testReceived.slice()
+      }
+    }
+    return result
+  })
+}
+
 module.exports = {
   wait: wait,
   log: log,
@@ -314,6 +400,11 @@ module.exports = {
   waitForRootReady: waitForRootReady,
   pauseHeartbeats: pauseHeartbeats,
   resumeHeartbeats: resumeHeartbeats,
+  startBroadcast: startBroadcast,
+  stopBroadcast: stopBroadcast,
+  setupReceivers: setupReceivers,
+  teardownReceivers: teardownReceivers,
+  getReceivedMessages: getReceivedMessages,
   STEP_DELAY: STEP_DELAY,
   TEST_PATH: TEST_PATH
 }

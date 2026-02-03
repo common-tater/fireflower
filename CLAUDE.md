@@ -25,7 +25,7 @@ The **responder** (parent node) is always the WebRTC **initiator** (creates the 
 
 ### Data channels
 Two data channels per connection:
-- `_default` — general data channel
+- `_default` — broadcast data channel. Data flows strictly downward (root → leaves). Root calls `node.send(data)` to push data to direct children; each intermediate node relays to its own children via `_ondata`. Nodes emit a `'data'` event for application consumption. Same backpressure threshold as heartbeat/mask relay.
 - `notifications` — used for mask/config updates and heartbeat from parent to child
 
 Both channels must be created BEFORE calling `peer.negotiate()` so they are included in the SDP offer.
@@ -185,6 +185,9 @@ If a node's process is killed or a browser tab is closed without proper cleanup,
 ### Ghost nodes from external browser tabs
 When running tests with `?path=test-tree`, any other browser tab (e.g., user's Brave browser) open on the same path joins the same tree. These "ghost nodes" are LIVE nodes with fresh timestamps, so the 60s stale request check doesn't catch them. They can fill root's K capacity (e.g., K=2 with relay + ghost = FULL), blocking test nodes from upgrading to P2P. Ghost nodes are not a bug — they're legitimate nodes on the same tree. The system must be resilient to unexpected nodes consuming root capacity. Key insight: the upgrade deadlock was not caused by ghost nodes per se, but by the now-removed server-transport-no-respond restriction that prevented server-connected nodes from forming P2P sub-trees when root was full.
 
+### Broadcast data flow (send / data event)
+`Node.prototype.send(data)` pushes data to all downstream peers' `_default` channels. Each intermediate node's `_ondata` handler emits `'data'` and relays to its own children (skipping the sender). Data flows strictly root → leaves — the same direction as mask updates and heartbeats. The `_default` channel is created on both P2P and server transport connections. The relay server's cold connection handler also creates `_default` alongside `notifications`.
+
 ### Console.log strategy for index.js
 Strategic console.logs remain in index.js **only** for topology-changing events: upstream/downstream connected/disconnected, `_dorequest` with full state, `RESPOND` (accepting a request), `_reviewResponses` with candidate counts, `_reviewRequests` decisions (SUBSCRIBING/FULL), `_attemptUpgrade`, and `serverOnly` transitions. Per-request diagnostics (SAW request, SKIP request, every _onresponse) go to the `_debugLog` ring buffer (via `this._log()`) to keep console output focused on connection topology. The ring buffer preserves full diagnostic data for post-mortem analysis via `waitForAll` timeout dumps. When debugging a specific issue, add temporary console.logs but remove them before committing.
 
@@ -199,6 +202,9 @@ When the relay responds to a node's upgrade request, it creates a downstream ent
 
 ### Direct server reconnect bypasses Firebase signaling
 When a node's P2P upstream dies and the node has cached `_serverInfo` (from a previous server-first connection), `_connectToServerDirect()` connects to the relay server's WebSocket immediately — no Firebase request/response round-trip needed. This shaves seconds off reconnection for orphaned nodes. The method creates a `ServerTransport` directly, and on success sets it as primary upstream with mask/heartbeat wiring, then starts the P2P upgrade timer. On failure or timeout, it falls back to `this.connect()` (normal Firebase path). The fast path triggers in `_onupstreamDisconnect` when: `peer.didConnect && _serverInfo && serverFirst && !_serverAtCapacity && !isServer && !root`.
+
+### ServerPeerAdapter must re-send channel-open in wireUp
+In the normal Firebase request/response flow, `_connectToPeer(true, ...)` calls `createDataChannel('_default')` and `createDataChannel('notifications')` on the `ServerPeerAdapter`. These calls send `channel-open` via `_send()`, but the adapter has no WebSocket yet (`_pending = true`). The messages are silently dropped. When `wireUp(ws)` is called later, the adapter gets a WebSocket, but the client never received `channel-open` — it doesn't know the channels exist. Fix: in `wireUp`, after setting `_ws`, iterate `this._channels` and re-send `channel-open` for each. The cold connection path (relay-server.js) doesn't have this issue because `wireUp` is called BEFORE `createDataChannel`. Note: the `notifications` channel had this bug too, but it was masked because heartbeat/mask data sent AFTER `wireUp` still worked (the server-side ChannelShim was valid), and server transport uses WebSocket close for disconnect detection instead of heartbeat timeout.
 
 ### Relay server accepts cold WebSocket connections
 When `_connectToServerDirect` connects to the relay server, there's no pending `ServerPeerAdapter` (normally created during Firebase request/response). The relay server handles this by creating an adapter on the fly when a WebSocket arrives with no pending adapter and `node.state === 'connected'`. It wires the adapter into `node.downstream`, creates the notifications channel, and triggers `_ondownstreamConnect` — the same flow as a normal Firebase-signaled connection. If `node.state !== 'connected'`, the connection is rejected (server is shutting down or not ready).
@@ -327,3 +333,7 @@ Open the 3D visualizer at `http://localhost:8081/test-tree` in a separate tab to
 34. Relay Server Restart Handling — Verify nodes reconnect to a new relay instance after the server process is killed and restarted.
 35. K Decrease Prunes Excess Children — Reduce K from 3→1 with a full tree, verify pruned children reconnect and no node exceeds new K.
 36. Cascade Disconnect During Reconnection — Disconnect a second parent while orphans from the first are still reconnecting; all nodes must recover with no circles.
+37. Data Integrity During Topology Changes — Root broadcasts numbered messages while a mid-tree node is disconnected; surviving nodes must receive messages after reconnection.
+38. Continuous Churn (Join/Leave Overlap) — Add/remove nodes randomly while data flows; all final nodes receive post-stabilization messages, no circles.
+39. Late Joiner Receives Data — Node added after broadcast starts receives messages sent after it connects (no backfill expected).
+40. Flash Crowd (Mass Simultaneous Join) — 10 nodes join near-simultaneously while data flows; all receive post-settle messages, no circles.

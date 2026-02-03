@@ -83,7 +83,7 @@ The example app includes a 2D canvas visualization. Open http://localhost:8081 f
 - Node colors reflect health score (green = healthy, red = struggling)
 
 ## Testing
-Automated test suite using Puppeteer with 36 scenarios:
+Automated test suite using Puppeteer with 40 scenarios:
 
 ```
 $ npm test           # Run all scenarios
@@ -131,6 +131,10 @@ Tests launch a visible Chrome browser so you can watch nodes connect in the 2D v
 34. Relay Server Restart Handling
 35. K Decrease Prunes Excess Children
 36. Cascade Disconnect During Reconnection
+37. Data Integrity During Topology Changes
+38. Continuous Churn (Join/Leave Overlap)
+39. Late Joiner Receives Data
+40. Flash Crowd (Mass Simultaneous Join)
 
 ## Build
 ```
@@ -199,11 +203,17 @@ Publish a request to join the tree. If disconnected, instances will republish th
 #### `node.disconnect()`
 Disconnect and halt any attempts to reconnect.
 
+#### `node.send(data)`
+Broadcast data to all downstream peers via the `_default` data channel. Data flows strictly downward through the tree (root → leaves). Each intermediate node automatically relays to its children.
+
 #### `node.blacklist.add(id)`
 #### `node.blacklist.remove([id])`
 #### `node.blacklist.contains(id)`
 
 ## Events
+#### `node.emit('data', data)`
+Received broadcast data from upstream. Emitted on every node in the tree as data flows from root to leaves.
+
 #### `node.emit('connect', peer)`
 An upstream node has responded to the instance's request to join the tree and has established an `RTCDataChannel` connection.
 

@@ -801,9 +801,7 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
   if (initiator) {
     this.downstream[peer.id] = peer
     // Create all data channels BEFORE negotiation so they're included in the SDP offer
-    if (!isServerTransport) {
-      peer.createDataChannel('_default', peer.channelConfig)
-    }
+    peer._default = peer.createDataChannel('_default', peer.channelConfig)
     peer.notifications = peer.createDataChannel('notifications')
     peer.notifications.onopen = function () {
       peer.didConnect = true
@@ -824,6 +822,11 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
           } else {
             self._onmaskUpdate(evt)
           }
+        }
+      } else if (channel.label === '_default') {
+        peer._default = channel
+        channel.onmessage = function (evt) {
+          self._ondata(peer, evt)
         }
       }
     })
@@ -1084,7 +1087,7 @@ Node.prototype._connectServerFallback = function (response) {
     }
   })
 
-  // Handle notifications channel — ignore mask updates, only track heartbeats
+  // Handle data channels — notifications for heartbeat, _default for data relay
   transport.on('datachannel', function (channel) {
     if (channel.label === 'notifications') {
       channel.onmessage = function (evt) {
@@ -1101,6 +1104,11 @@ Node.prototype._connectServerFallback = function (response) {
           }, HEARTBEAT_TIMEOUT)
         }
         // Ignore mask updates — keep primary upstream's tree position
+      }
+    } else if (channel.label === '_default') {
+      transport._default = channel
+      channel.onmessage = function (evt) {
+        self._ondata(transport, evt)
       }
     }
   })
@@ -1274,7 +1282,7 @@ Node.prototype._connectToServerDirect = function () {
     self.connect()
   })
 
-  // Wire notifications channel for mask updates and heartbeat
+  // Wire data channels for mask updates, heartbeat, and data relay
   transport.on('datachannel', function (channel) {
     if (channel.label === 'notifications') {
       transport.notifications = channel
@@ -1285,6 +1293,11 @@ Node.prototype._connectToServerDirect = function () {
         } else {
           self._onmaskUpdate(evt)
         }
+      }
+    } else if (channel.label === '_default') {
+      transport._default = channel
+      channel.onmessage = function (evt) {
+        self._ondata(transport, evt)
       }
     }
   })
@@ -1691,6 +1704,44 @@ Node.prototype._updateMask = function (data) {
         } catch (err) {
           console.warn(this.id + ' failed to relay mask update downstream', err)
         }
+      }
+    }
+  }
+}
+
+/**
+ * Handle incoming data on the _default channel.
+ * Emits 'data' for application consumption and relays to all downstream peers.
+ */
+Node.prototype._ondata = function (peer, evt) {
+  this.emit('data', evt.data)
+
+  // Relay to all downstream peers (skip sender)
+  for (var id in this.downstream) {
+    if (id === peer.id) continue
+    var ds = this.downstream[id]
+    if (ds._default && ds._default.readyState === 'open') {
+      if (!ds._default.bufferedAmount || ds._default.bufferedAmount < BACKPRESSURE_THRESHOLD) {
+        try {
+          ds._default.send(evt.data)
+        } catch (err) {}
+      }
+    }
+  }
+}
+
+/**
+ * Broadcast data to all downstream peers via the _default channel.
+ * Typically called by root to push data down the tree.
+ */
+Node.prototype.send = function (data) {
+  for (var id in this.downstream) {
+    var peer = this.downstream[id]
+    if (peer._default && peer._default.readyState === 'open') {
+      if (!peer._default.bufferedAmount || peer._default.bufferedAmount < BACKPRESSURE_THRESHOLD) {
+        try {
+          peer._default.send(data)
+        } catch (err) {}
       }
     }
   }

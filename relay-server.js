@@ -222,7 +222,8 @@ wss.on('connection', function (ws) {
         node.downstream[clientId] = coldAdapter
         coldAdapter.on('close', node._onpeerDisconnect.bind(node, coldAdapter, null))
         coldAdapter.wireUp(ws)
-        // Create notifications channel (now that _ws is set, channel-open reaches client)
+        // Create data channels (now that _ws is set, channel-open reaches client)
+        coldAdapter._default = coldAdapter.createDataChannel('_default')
         coldAdapter.notifications = coldAdapter.createDataChannel('notifications')
         coldAdapter.notifications.onopen = function () {
           node._onnotificationsOpen(coldAdapter)

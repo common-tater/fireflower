@@ -42,6 +42,13 @@ ServerPeerAdapter.prototype.wireUp = function (ws) {
   this._ws = ws
   this._pending = false
 
+  // Re-send channel-open for channels created before wireUp.
+  // createDataChannel sends channel-open via _send, but _send silently drops
+  // messages when _ws is null (pending state). Flush them now that WS is ready.
+  for (var label in this._channels) {
+    this._send({ type: 'channel-open', label: label })
+  }
+
   ws.on('message', function (raw) {
     if (self._closed) return
     var data
