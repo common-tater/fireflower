@@ -1598,13 +1598,13 @@ async function scenario37 (page) {
   h.log('  Disconnecting node ' + target.slice(-5) + ' while messages flow...')
   await h.disconnectNode(page, target)
 
-  // Wait for survivors to reconnect
+  // Wait for survivors to reconnect (must have a LIVE upstream, not the dead target)
   var surviving = ids.filter(function (id) { return id !== target })
   await h.waitForAll(page, function (states) {
     return surviving.every(function (id) {
-      return states[id] && states[id].state === 'connected'
+      return states[id] && states[id].state === 'connected' && states[id].upstream !== target
     })
-  }, 'surviving nodes reconnect', 30000)
+  }, 'surviving nodes reconnect to live parents', 30000)
 
   // Continue sending for 3 more seconds to ensure messages flow post-reconnect
   await h.wait(3000)
