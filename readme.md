@@ -24,6 +24,20 @@ Scalable broadcasting for streams of live data.
 5. Go to Project Settings > General > Your apps > Add app (Web)
 6. Copy the config values into `example/firebase-config.js` (see `firebase-config.example.js`)
 
+### Security Rules
+To secure the database, you can restrict write access to specific admin users using their Firebase Authentication UID.
+
+1. Create a node `/admins` in your Realtime Database.
+2. Add your admin User UID as a key with value `true`:
+   ```json
+   {
+     "admins": {
+       "YOUR_USER_UID": true
+     }
+   }
+   ```
+3. Deploy the security rules provided in `database.rules.json`, which check for `root.child('admins').child(auth.uid).val() === true`.
+
 ### Install
 ```
 $ npm install
