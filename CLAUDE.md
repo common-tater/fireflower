@@ -35,6 +35,8 @@ External packages (like fireflower-audio) can add custom data channels without m
 - `peerCreated(peer)` — emitted on initiator (parent) before SDP negotiation. Handler can call `peer.createDataChannel(label, options)` to add custom channels that will be in the initial offer.
 - `datachannel(peer, channel)` — emitted on non-initiator (child) when an unknown channel arrives (i.e., not `_default` or `notifications`). Handler can wire `channel.onmessage` and store the channel reference.
 
+**Late-binding support:** Custom channels are stored on `peer._channels[label]` so handlers that start after the connection is established can still find them. Check `peer._channels._audio` if the `datachannel` event was missed.
+
 Example for unreliable audio channel:
 ```javascript
 node.on('peerCreated', (peer) => {
@@ -46,6 +48,15 @@ node.on('datachannel', (peer, channel) => {
     channel.onmessage = (evt) => handleAudio(peer, evt)
   }
 })
+
+// For late-binding (handler starts after connection):
+function wireExistingChannel(peer) {
+  var channel = peer._audio || (peer._channels && peer._channels._audio)
+  if (channel) {
+    peer._audio = channel
+    channel.onmessage = (evt) => handleAudio(peer, evt)
+  }
+}
 ```
 
 ### Heartbeat (disconnect detection)

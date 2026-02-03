@@ -831,6 +831,9 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
           self._ondata(peer, evt)
         }
       } else {
+        // Store custom channel on peer for late-binding handlers
+        peer._channels = peer._channels || {}
+        peer._channels[channel.label] = channel
         // Emit for custom channels so external packages can handle them
         self.emit('datachannel', peer, channel)
       }
@@ -1116,6 +1119,9 @@ Node.prototype._connectServerFallback = function (response) {
         self._ondata(transport, evt)
       }
     } else {
+      // Store custom channel on transport for late-binding handlers
+      transport._channels = transport._channels || {}
+      transport._channels[channel.label] = channel
       // Emit for custom channels so external packages can handle them
       self.emit('datachannel', transport, channel)
     }
@@ -1308,6 +1314,9 @@ Node.prototype._connectToServerDirect = function () {
         self._ondata(transport, evt)
       }
     } else {
+      // Store custom channel on transport for late-binding handlers
+      transport._channels = transport._channels || {}
+      transport._channels[channel.label] = channel
       // Emit for custom channels so external packages can handle them
       self.emit('datachannel', transport, channel)
     }
