@@ -49,7 +49,11 @@ var scenarios = [
   { name: 'Deep Line Recovery (K=1)', fn: scenario33 },
   { name: 'Relay Server Restart Handling', fn: scenario34 },
   { name: 'K Decrease Prunes Excess Children', fn: scenario35 },
-  { name: 'Cascade Disconnect During Reconnection', fn: scenario36 }
+  { name: 'Cascade Disconnect During Reconnection', fn: scenario36 },
+  { name: 'Data Integrity During Topology Changes', fn: scenario37 },
+  { name: 'Continuous Churn (Join/Leave Overlap)', fn: scenario38 },
+  { name: 'Late Joiner Receives Data', fn: scenario39 },
+  { name: 'Flash Crowd (Mass Simultaneous Join)', fn: scenario40 }
 ]
 
 // ─── Scenario implementations ───────────────────────────────────────
@@ -1562,6 +1566,261 @@ async function scenario36 (page) {
     return removed.indexOf(id) === -1 && finalStates[id].state === 'connected'
   }).length
   h.log('  Cascade disconnect recovered: ' + finalCount + ' nodes connected, no circles')
+}
+
+async function scenario37 (page) {
+  // Data Integrity During Topology Changes:
+  // Root broadcasts numbered messages while a mid-tree node is disconnected.
+  // Surviving nodes must receive messages after reconnection.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, false)
+  await h.wait(1000)
+
+  var ids = await h.addNodes(page, 5)
+  await h.waitForAllConnected(page, 6) // root + 5
+
+  await h.setupReceivers(page)
+  h.log('  Starting broadcast (200ms interval)...')
+  await h.startBroadcast(page, 200)
+
+  // Let messages flow for 1s
+  await h.wait(1000)
+
+  // Disconnect a mid-tree node that has children
+  var states = await h.getNodeStates(page)
+  var target = ids.find(function (id) {
+    return states[id] && states[id].connectedDownstreamCount > 0
+  })
+  if (!target) {
+    // No mid-tree parent found, pick a leaf instead
+    target = ids[ids.length - 1]
+  }
+  h.log('  Disconnecting node ' + target.slice(-5) + ' while messages flow...')
+  await h.disconnectNode(page, target)
+
+  // Wait for survivors to reconnect
+  var surviving = ids.filter(function (id) { return id !== target })
+  await h.waitForAll(page, function (states) {
+    return surviving.every(function (id) {
+      return states[id] && states[id].state === 'connected'
+    })
+  }, 'surviving nodes reconnect', 30000)
+
+  // Continue sending for 3 more seconds to ensure messages flow post-reconnect
+  await h.wait(3000)
+
+  var totalSent = await h.stopBroadcast(page)
+  h.log('  Sent ' + totalSent + ' messages total')
+
+  // Wait for relay propagation
+  await h.wait(2000)
+
+  var received = await h.getReceivedMessages(page)
+  await h.teardownReceivers(page)
+
+  // Check surviving non-root nodes received at least some of the later messages
+  var lastFew = []
+  for (var s = totalSent; s > totalSent - 5 && s > 0; s--) {
+    lastFew.push(s)
+  }
+
+  for (var i = 0; i < surviving.length; i++) {
+    var nid = surviving[i]
+    var msgs = received[nid] || []
+    // Check that at least 2 of the last 5 messages arrived
+    var gotLast = lastFew.filter(function (seq) { return msgs.indexOf(seq) !== -1 })
+    assert(gotLast.length >= 2,
+      'Node ' + nid.slice(-5) + ' should have received at least 2 of last 5 messages, got ' + gotLast.length + ' (received ' + msgs.length + ' total)')
+  }
+
+  h.log('  Data integrity verified: all surviving nodes received post-reconnect messages')
+}
+
+async function scenario38 (page) {
+  // Continuous Churn: add/remove nodes while data flows, verify final nodes get messages.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  var ids = await h.addNodes(page, 4)
+  await h.waitForAllConnected(page, 5)
+
+  await h.setupReceivers(page)
+  h.log('  Starting broadcast (300ms interval)...')
+  await h.startBroadcast(page, 300)
+
+  // Run 6 churn rounds, 1.5s apart
+  var removed = []
+  for (var round = 0; round < 6; round++) {
+    await h.wait(1500)
+    var liveIds = ids.filter(function (id) { return removed.indexOf(id) === -1 })
+
+    if (Math.random() < 0.5 && liveIds.length > 1) {
+      // Remove a random non-first node
+      var idx = 1 + Math.floor(Math.random() * (liveIds.length - 1))
+      var victim = liveIds[idx]
+      h.log('  Churn round ' + (round + 1) + ': removing ' + victim.slice(-5))
+      await h.disconnectNode(page, victim)
+      removed.push(victim)
+    } else {
+      // Add a node
+      var newIds = await h.addNodes(page, 1)
+      ids = ids.concat(newIds)
+      h.log('  Churn round ' + (round + 1) + ': added ' + newIds[0].slice(-5))
+    }
+  }
+
+  // Wait for tree to stabilize
+  var finalLive = ids.filter(function (id) { return removed.indexOf(id) === -1 })
+  await h.waitForAll(page, function (states) {
+    return finalLive.every(function (id) {
+      return states[id] && states[id].state === 'connected'
+    })
+  }, 'all surviving nodes connected after churn', 45000)
+
+  // Send 5 more post-stabilization messages
+  await h.wait(2000)
+  var totalSent = await h.stopBroadcast(page)
+  h.log('  Sent ' + totalSent + ' messages total, ' + finalLive.length + ' nodes alive')
+
+  await h.wait(2000)
+  var received = await h.getReceivedMessages(page)
+  await h.teardownReceivers(page)
+
+  // Check surviving non-root nodes received at least some late messages
+  var lastFew = []
+  for (var s = totalSent; s > totalSent - 5 && s > 0; s--) {
+    lastFew.push(s)
+  }
+
+  var states = await h.getNodeStates(page)
+  for (var i = 0; i < finalLive.length; i++) {
+    var nid = finalLive[i]
+    if (states[nid] && states[nid].isRoot) continue
+    var msgs = received[nid] || []
+    var gotLast = lastFew.filter(function (seq) { return msgs.indexOf(seq) !== -1 })
+    assert(gotLast.length >= 2,
+      'Node ' + nid.slice(-5) + ' should have received at least 2 of last 5 messages, got ' + gotLast.length)
+  }
+
+  assertNoCircles(states)
+  h.log('  Churn test passed: data flows through topology changes, no circles')
+}
+
+async function scenario39 (page) {
+  // Late Joiner: node added after broadcast starts should receive subsequent messages.
+  await h.setK(page, 2)
+  await h.setServerEnabled(page, false)
+  await h.wait(1000)
+
+  var ids = await h.addNodes(page, 3)
+  await h.waitForAllConnected(page, 4) // root + 3
+
+  await h.setupReceivers(page)
+  h.log('  Starting broadcast (200ms interval)...')
+  await h.startBroadcast(page, 200)
+
+  // Let messages flow for 2s (10+ messages)
+  await h.wait(2000)
+
+  // Record the current seq before adding the late joiner
+  var seqBeforeJoin = await page.evaluate(function () {
+    return window._broadcastSeq || 0
+  })
+  h.log('  Seq before late joiner: ' + seqBeforeJoin)
+
+  // Add late joiner
+  h.log('  Adding late joiner...')
+  var lateIds = await h.addNodes(page, 1)
+  var lateId = lateIds[0]
+
+  // Wait for it to connect
+  await h.waitForAll(page, function (states) {
+    return states[lateId] && states[lateId].state === 'connected'
+  }, 'late joiner connected', 20000)
+
+  // Continue sending 5+ more messages after joiner is connected
+  await h.wait(2000)
+
+  var totalSent = await h.stopBroadcast(page)
+  h.log('  Sent ' + totalSent + ' messages total, joiner arrived at seq ' + seqBeforeJoin)
+
+  await h.wait(2000)
+  var received = await h.getReceivedMessages(page)
+  await h.teardownReceivers(page)
+
+  var lateReceived = received[lateId] || []
+  // Late joiner should have received messages sent AFTER it connected
+  var postJoinMessages = lateReceived.filter(function (seq) { return seq > seqBeforeJoin })
+  h.log('  Late joiner received ' + postJoinMessages.length + ' post-join messages (of ' + (totalSent - seqBeforeJoin) + ' sent after join)')
+
+  assert(postJoinMessages.length >= 3,
+    'Late joiner should have received at least 3 post-join messages, got ' + postJoinMessages.length)
+
+  h.log('  Late joiner verified: received ' + postJoinMessages.length + ' messages after connecting')
+}
+
+async function scenario40 (page) {
+  // Flash Crowd: 10 nodes join near-simultaneously while data flows.
+  await h.setK(page, 3)
+  await h.setServerEnabled(page, true)
+  await h.wait(2000)
+
+  await h.setupReceivers(page)
+  h.log('  Starting broadcast (300ms interval)...')
+  await h.startBroadcast(page, 300)
+
+  // Add 10 nodes with 200ms spacing (near-simultaneous)
+  h.log('  Adding 10 nodes rapidly (200ms spacing)...')
+  var ids = []
+  for (var i = 0; i < 10; i++) {
+    var newIds = await page.evaluate(function () {
+      var node = window.graph.add({})
+      node.x = 200 + Math.random() * (window.innerWidth - 300)
+      node.y = 100 + Math.random() * (window.innerHeight - 200)
+      window.graph.render()
+      return node.id
+    })
+    ids.push(newIds)
+    if (i < 9) await h.wait(200)
+  }
+  h.log('  Added 10 nodes: ' + ids.map(function (id) { return id.slice(-5) }).join(', '))
+
+  // Wait for all 11 nodes connected (root + 10) — generous timeout for flash crowd
+  await h.waitForAllConnected(page, 11, 60000)
+  h.log('  All 11 nodes connected')
+
+  // Send 5 more post-settle messages
+  await h.wait(2000)
+  var totalSent = await h.stopBroadcast(page)
+  h.log('  Sent ' + totalSent + ' messages total')
+
+  await h.wait(2000)
+  var received = await h.getReceivedMessages(page)
+  await h.teardownReceivers(page)
+
+  var lastFew = []
+  for (var s = totalSent; s > totalSent - 5 && s > 0; s--) {
+    lastFew.push(s)
+  }
+
+  var states = await h.getNodeStates(page)
+  assertNoCircles(states)
+
+  var failedNodes = []
+  for (var j = 0; j < ids.length; j++) {
+    var nid = ids[j]
+    var msgs = received[nid] || []
+    var gotLast = lastFew.filter(function (seq) { return msgs.indexOf(seq) !== -1 })
+    if (gotLast.length < 2) {
+      failedNodes.push(nid.slice(-5) + ' (got ' + gotLast.length + ')')
+    }
+  }
+
+  assert(failedNodes.length === 0,
+    'Nodes missing post-settle messages: ' + failedNodes.join(', '))
+
+  h.log('  Flash crowd passed: all 10 nodes received data, no circles')
 }
 
 // ─── Infrastructure ─────────────────────────────────────────────────
