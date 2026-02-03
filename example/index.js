@@ -5,8 +5,106 @@ var firebaseInit = require('./firebase-init')
 var firebaseConfig = require('./firebase-config')
 var firebase = firebaseInit.init(firebaseConfig)
 var { ref, child, get } = require('firebase/database')
+var { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } = require('firebase/auth')
 
-// Now load modules that depend on Firebase
+var auth = getAuth(firebase.app)
+
+// Robust Login UI
+showLogin('checking') // Show checking state immediately
+
+function showLogin(state = 'login', user = null, errorMsg = null) {
+  var overlay = document.getElementById('login-overlay')
+  var form = document.getElementById('login-form')
+  var actionArea = document.getElementById('login-action-area')
+  var title = document.getElementById('login-title')
+  var errorDiv = document.getElementById('login-error')
+
+  if (!overlay) return // Should exist in HTML
+
+  overlay.classList.remove('hidden')
+
+  // Reset visibility
+  form.classList.add('hidden')
+  actionArea.classList.add('hidden')
+
+  if (state === 'checking') {
+    title.innerText = 'Verifying...'
+  }
+  else if (state === 'unauthorized') {
+    title.innerText = 'Access Denied'
+    title.style.color = 'var(--color-struggling)'
+
+    actionArea.classList.remove('hidden')
+    var msg = document.getElementById('login-msg')
+    var btn = document.getElementById('login-action-btn')
+
+    msg.innerText = `User ${user ? user.email : ''} is not authorized.`
+    btn.innerText = 'Sign Out / Retry'
+    btn.onclick = () => {
+      auth.signOut()
+      showLogin('login')
+    }
+  }
+  else { // 'login'
+    title.innerText = 'Restricted Access'
+    title.style.color = '' // Reset color
+
+    form.classList.remove('hidden')
+
+    var email = document.getElementById('login-email')
+    var pass = document.getElementById('login-pass')
+    var btn = document.getElementById('login-btn')
+
+    if (errorMsg) errorDiv.innerText = errorMsg
+
+    // Bind click ONLY if not already bound (simple check or simple rebind)
+    // To be safe and simple, we re-bind.
+    btn.onclick = () => {
+      errorDiv.innerText = ''
+      btn.style.opacity = '0.5'
+      btn.innerText = 'Signing in...'
+      signInWithEmailAndPassword(auth, email.value, pass.value)
+        .catch(e => {
+          btn.style.opacity = '1'
+          btn.innerText = 'Sign In'
+          errorDiv.innerText = e.message
+        })
+    }
+
+    pass.onkeyup = (e) => { if(e.key === 'Enter') btn.click() }
+  }
+}
+
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    showLogin('checking')
+    // Verify admin access by reading specific user node
+    // This assumes rules allow reading /admins/$uid ONLY if it evaluates to true
+    // Or we simply try to access the tree path which is protected.
+    // Let's check admins path explicitly as it is the source of truth.
+    get(child(ref(firebase.db, 'admins'), user.uid))
+      .then((snap) => {
+        if (snap.val() === true) {
+          document.getElementById('login-overlay').classList.add('hidden')
+          initApp()
+        } else {
+          showLogin('unauthorized', user)
+        }
+      })
+      .catch((err) => {
+        // Permission denied or other error
+        console.error('Permission check failed:', err)
+        showLogin('unauthorized', user)
+      })
+  } else {
+    showLogin('login')
+  }
+})
+
+function initApp() {
+  if (window.root) return // Already initialized
+
+  // Now load modules that depend on Firebase
 var fireflower = require('../')(firebase.db)
 var Graph = require('./src/graph')
 
@@ -32,6 +130,7 @@ var { remove, set, onValue } = require('firebase/database')
 
 // Reset button: disconnects node, clears Firebase data, prevents reconnect
 var resetBtn = document.querySelector('#reset-btn')
+resetBtn.classList.add('btn-danger') // Start with danger class for hover effect
 resetBtn.addEventListener('click', function () {
   if (resetBtn.classList.contains('disabled')) return
   resetBtn.classList.add('disabled')
@@ -42,6 +141,18 @@ resetBtn.addEventListener('click', function () {
   remove(ref(firebase.db, treePath + '/requests'))
   remove(ref(firebase.db, treePath + '/reports'))
 })
+
+// Logout button
+var controls = document.getElementById('controls')
+var logoutBtn = document.createElement('button')
+logoutBtn.innerText = 'Logout'
+// No inline style needed, CSS handles #controls button
+logoutBtn.addEventListener('click', function() {
+  auth.signOut().then(() => {
+    location.reload()
+  })
+})
+controls.appendChild(logoutBtn)
 
 // Server toggle: enables/disables the relay server via Firebase config
 var serverToggle = document.querySelector('#server-toggle')
@@ -165,3 +276,4 @@ onValue(serverCapacityConfigRef, function (snapshot) {
   serverCapacityInput.value = capacity || ''
   serverCapacityInput.placeholder = capacity ? '' : '∞'
 })
+}

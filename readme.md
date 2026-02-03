@@ -24,6 +24,20 @@ Scalable broadcasting for streams of live data.
 5. Go to Project Settings > General > Your apps > Add app (Web)
 6. Copy the config values into `example/firebase-config.js` (see `firebase-config.example.js`)
 
+### Security Rules
+To secure the database, you can restrict write access to specific admin users using their Firebase Authentication UID.
+
+1. Create a node `/admins` in your Realtime Database.
+2. Add your admin User UID as a key with value `true`:
+   ```json
+   {
+     "admins": {
+       "YOUR_USER_UID": true
+     }
+   }
+   ```
+3. Deploy the security rules provided in `database.rules.json`, which check for `root.child('admins').child(auth.uid).val() === true`.
+
 ### Install
 ```
 $ npm install
@@ -58,6 +72,7 @@ $ npm run dev
 
 Open http://localhost:8080 in your browser. Click the canvas to add peer nodes and watch the K-ary tree form in real-time. Works on desktop browsers and mobile (Chrome on Android, Safari on iOS).
 
+> **Note:** The example app requires you to sign in with an email account authorized in the `/admins` database node (see **Security Rules** above). The app will prompt you to login automatically.
 Use `?path=<name>` to run on a different Firebase path (default: `tree`). Multiple tabs with different paths are fully independent trees.
 
 ### Relay Server

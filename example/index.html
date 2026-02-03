@@ -84,6 +84,28 @@
       </div>
     </div>
 
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="hidden">
+      <div class="login-box">
+        <h3 id="login-title" class="login-title">Verifying...</h3>
+
+        <!-- Login Form -->
+        <div id="login-form" class="hidden">
+          <input id="login-email" class="login-input" type="email" placeholder="Email">
+          <input id="login-pass" class="login-input" type="password" placeholder="Password">
+          <button id="login-btn" class="login-btn">Sign In</button>
+          <div id="login-error" class="login-error"></div>
+          <p class="login-msg" style="display:none">Or contact admin for access.</p>
+        </div>
+
+        <!-- Message / Action Area -->
+        <div id="login-action-area" class="hidden">
+          <p id="login-msg" class="login-msg"></p>
+          <button id="login-action-btn" class="login-btn btn-secondary">Action</button>
+        </div>
+      </div>
+    </div>
+
     <script type="text/javascript" src="build.js"></script>
   </body>
 </html>
