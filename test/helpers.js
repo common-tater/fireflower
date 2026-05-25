@@ -67,7 +67,16 @@ async function getNodeStates (page) {
         hasServerFallback: !!root.model._serverFallback,
         hasServerInfo: !!root.model._serverInfo,
         ancestors: root.model._ancestors || [],
-        debugLog: (root.model._debugLog || []).slice(-50)
+        debugLog: (root.model._debugLog || []).slice(-50),
+        downstreamRtts: (function () {
+          var rtts = {}
+          for (var did in (root.model.downstream || {})) {
+            var ds = root.model.downstream[did]
+            if (ds._rtt != null) rtts[did] = Math.round(ds._rtt)
+          }
+          return rtts
+        })(),
+        dropRate: root.model._dropRate
       }
     }
 
@@ -99,7 +108,9 @@ async function getNodeStates (page) {
         hasServerInfo: !!node.model._serverInfo,
         serverAtCapacity: !!node.model._serverAtCapacity,
         ancestors: node.model._ancestors || [],
-        debugLog: (node.model._debugLog || []).slice(-50)
+        debugLog: (node.model._debugLog || []).slice(-50),
+        upstreamRtt: node.model.upstream && node.model.upstream._rtt != null ? Math.round(node.model.upstream._rtt) : null,
+        dropRate: node.model._dropRate
       }
     }
     return result

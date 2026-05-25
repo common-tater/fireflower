@@ -8,6 +8,7 @@ var events = require('events')
 var inherits = require('inherits')
 var Peer = require('./peer')
 var ServerTransport = require('./server-transport')
+var WebTransportTransport = require('./webtransport-transport')
 var ServerPeerAdapter = require('./server-peer-adapter')
 var Blacklist = require('./blacklist')
 var firebase = require('firebase/database')
@@ -85,6 +86,10 @@ function Node (path, opts) {
   // health tracking
   this._connectedAt = null
   this._reconnectTimes = []  // timestamps of recent disconnects
+  this._dropRate = null  // set by fireflower-audio via 'dropRate' event
+
+  var self = this
+  this.on('dropRate', function (rate) { self._dropRate = rate })
 
   // dedup: track request IDs we've already responded to
   this._respondedRequests = {}
@@ -273,7 +278,7 @@ Node.prototype._onconfig = function (snapshot) {
 
   // Cache serverUrl from config so all nodes know where the server is
   if (data && data.serverUrl && !this.isServer) {
-    this._serverInfo = { id: data.serverId || null, serverUrl: data.serverUrl }
+    this._serverInfo = { id: data.serverId || null, serverUrl: data.serverUrl, serverWebTransportUrl: data.serverWebTransportUrl || null }
   } else if (!this.isServer && (!data || !data.serverUrl) && !serverEnabled) {
     this._serverInfo = null
   }
@@ -576,9 +581,15 @@ Node.prototype._onrequest = function (snapshot) {
     upstream: this.upstream ? this.upstream.id : null,
     health: this._getHealthScore()
   }
+  if (this.upstream && this.upstream._rtt != null) {
+    response.rtt = Math.round(this.upstream._rtt)
+  }
   if (this.isServer) {
     response.transport = 'server'
     response.serverUrl = this.serverUrl
+    if (this.opts.serverWebTransportUrl) {
+      response.serverWebTransportUrl = this.opts.serverWebTransportUrl
+    }
   }
   firebase.update(responseRef, response)
 
@@ -661,7 +672,7 @@ Node.prototype._reviewResponses = function () {
   for (var j in candidates) {
     var c = candidates[j]
     if (c.transport === 'server') {
-      this._serverInfo = { id: c.id, serverUrl: c.serverUrl }
+      this._serverInfo = { id: c.id, serverUrl: c.serverUrl, serverWebTransportUrl: c.serverWebTransportUrl || null }
       // Skip server candidates if server is at capacity (unless serverOnly mode)
       if (!this._serverAtCapacity || this.serverOnly) {
         serverCandidates.push(c)
@@ -679,10 +690,11 @@ Node.prototype._reviewResponses = function () {
   function healthSort (a, b) {
     var aHealth = a.health || 0
     var bHealth = b.health || 0
-    // Only use health if both have reported a score
     if (aHealth > 0 && bHealth > 0) {
       var healthDiff = bHealth - aHealth
       if (Math.abs(healthDiff) > 20) return healthDiff
+      // Within 20 points: use RTT as tiebreaker (lower = better)
+      if (a.rtt != null && b.rtt != null) return a.rtt - b.rtt
     }
     return a.level - b.level
   }
@@ -757,7 +769,7 @@ Node.prototype._acceptResponse = function (response) {
   // thread transport metadata to _connectToPeer
   var transportOpts = null
   if (response.transport === 'server') {
-    transportOpts = { transport: 'server', serverUrl: response.serverUrl }
+    transportOpts = { transport: 'server', serverUrl: response.serverUrl, serverWebTransportUrl: response.serverWebTransportUrl || (this._serverInfo && this._serverInfo.serverWebTransportUrl) || null }
   }
 
   // attempt a connection
@@ -772,7 +784,14 @@ Node.prototype._createTransport = function (initiator, peerId, transportOpts) {
       this._pendingAdapters[peerId] = adapter
       return adapter
     } else if (!initiator && transportOpts.serverUrl) {
-      // Client-side: create a ServerTransport to connect to the relay server
+      // Client-side: prefer WebTransport when available
+      if (transportOpts.serverWebTransportUrl && typeof WebTransport !== 'undefined') {
+        return new WebTransportTransport({
+          url: transportOpts.serverWebTransportUrl,
+          nodeId: this.id,
+          initiator: true
+        })
+      }
       return new ServerTransport({
         url: transportOpts.serverUrl,
         nodeId: this.id,
@@ -807,6 +826,17 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       peer.didConnect = true
       self._onnotificationsOpen(peer)
     }
+    peer.notifications.onmessage = function (evt) {
+      try {
+        var data = JSON.parse(evt.data)
+        if (data.type === 'heartbeat-ack') {
+          var rtt = Date.now() - data.t
+          if (rtt >= 0 && rtt < 30000) {
+            peer._rtt = peer._rtt ? 0.8 * peer._rtt + 0.2 * rtt : rtt
+          }
+        }
+      } catch (err) {}
+    }
     peer.requestId = requestId
     // Allow external packages to create custom channels before negotiation
     self.emit('peerCreated', peer)
@@ -821,7 +851,10 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
           var data = JSON.parse(evt.data)
           if (data.type === 'heartbeat') {
             self._onheartbeat(peer)
-          } else {
+            try {
+              peer.notifications.send(JSON.stringify({ type: 'heartbeat-ack', t: data.t }))
+            } catch (err) {}
+          } else if (data.type !== 'heartbeat-ack') {
             self._onmaskUpdate(evt)
           }
         }
@@ -1159,7 +1192,10 @@ Node.prototype._promoteServerFallback = function () {
       var data = JSON.parse(evt.data)
       if (data.type === 'heartbeat') {
         self._onheartbeat(fallback)
-      } else {
+        try {
+          channel.send(JSON.stringify({ type: 'heartbeat-ack', t: data.t }))
+        } catch (err) {}
+      } else if (data.type !== 'heartbeat-ack') {
         self._onmaskUpdate(evt)
       }
     }
@@ -1219,11 +1255,13 @@ Node.prototype._connectToServerDirect = function () {
   this.state = 'connecting'
   this.emit('statechange')
 
-  var transport = new ServerTransport({
-    url: serverUrl,
-    nodeId: this.id,
-    initiator: true
-  })
+  var wtUrl = this._serverInfo.serverWebTransportUrl
+  var transport
+  if (wtUrl && typeof WebTransport !== 'undefined') {
+    transport = new WebTransportTransport({ url: wtUrl, nodeId: this.id, initiator: true })
+  } else {
+    transport = new ServerTransport({ url: serverUrl, nodeId: this.id, initiator: true })
+  }
 
   transport.id = serverId
   transport.transportType = 'server'
@@ -1304,7 +1342,10 @@ Node.prototype._connectToServerDirect = function () {
         var data = JSON.parse(evt.data)
         if (data.type === 'heartbeat') {
           self._onheartbeat(transport)
-        } else {
+          try {
+            channel.send(JSON.stringify({ type: 'heartbeat-ack', t: data.t }))
+          } catch (err) {}
+        } else if (data.type !== 'heartbeat-ack') {
           self._onmaskUpdate(evt)
         }
       }
@@ -1822,7 +1863,7 @@ Node.prototype._getHealthData = function () {
       break
     }
   }
-  return {
+  var data = {
     score: this._getHealthScore(),
     uptime: this._connectedAt ? Math.round((now - this._connectedAt) / 1000) : 0,
     reconnects: recentReconnects,
@@ -1830,6 +1871,13 @@ Node.prototype._getHealthData = function () {
     level: this._level || 0,
     downstreamCount: downstreamCount
   }
+  if (this.upstream && this.upstream._rtt != null) {
+    data.rtt = Math.round(this.upstream._rtt)
+  }
+  if (this._dropRate != null) {
+    data.dropRate = parseFloat(this._dropRate.toFixed(4))
+  }
+  return data
 }
 
 Node.prototype._onreportNeeded = function () {
