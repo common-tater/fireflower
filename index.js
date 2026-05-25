@@ -85,6 +85,10 @@ function Node (path, opts) {
   // health tracking
   this._connectedAt = null
   this._reconnectTimes = []  // timestamps of recent disconnects
+  this._dropRate = null  // set by fireflower-audio via 'dropRate' event
+
+  var self = this
+  this.on('dropRate', function (rate) { self._dropRate = rate })
 
   // dedup: track request IDs we've already responded to
   this._respondedRequests = {}
@@ -575,6 +579,9 @@ Node.prototype._onrequest = function (snapshot) {
     level: this._level || 0,
     upstream: this.upstream ? this.upstream.id : null,
     health: this._getHealthScore()
+  }
+  if (this.upstream && this.upstream._rtt != null) {
+    response.rtt = Math.round(this.upstream._rtt)
   }
   if (this.isServer) {
     response.transport = 'server'
@@ -1842,7 +1849,7 @@ Node.prototype._getHealthData = function () {
       break
     }
   }
-  return {
+  var data = {
     score: this._getHealthScore(),
     uptime: this._connectedAt ? Math.round((now - this._connectedAt) / 1000) : 0,
     reconnects: recentReconnects,
@@ -1850,6 +1857,13 @@ Node.prototype._getHealthData = function () {
     level: this._level || 0,
     downstreamCount: downstreamCount
   }
+  if (this.upstream && this.upstream._rtt != null) {
+    data.rtt = Math.round(this.upstream._rtt)
+  }
+  if (this._dropRate != null) {
+    data.dropRate = parseFloat(this._dropRate.toFixed(4))
+  }
+  return data
 }
 
 Node.prototype._onreportNeeded = function () {
