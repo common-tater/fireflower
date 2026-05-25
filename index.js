@@ -8,6 +8,7 @@ var events = require('events')
 var inherits = require('inherits')
 var Peer = require('./peer')
 var ServerTransport = require('./server-transport')
+var WebTransportTransport = require('./webtransport-transport')
 var ServerPeerAdapter = require('./server-peer-adapter')
 var Blacklist = require('./blacklist')
 var firebase = require('firebase/database')
@@ -277,7 +278,7 @@ Node.prototype._onconfig = function (snapshot) {
 
   // Cache serverUrl from config so all nodes know where the server is
   if (data && data.serverUrl && !this.isServer) {
-    this._serverInfo = { id: data.serverId || null, serverUrl: data.serverUrl }
+    this._serverInfo = { id: data.serverId || null, serverUrl: data.serverUrl, serverWebTransportUrl: data.serverWebTransportUrl || null }
   } else if (!this.isServer && (!data || !data.serverUrl) && !serverEnabled) {
     this._serverInfo = null
   }
@@ -586,6 +587,9 @@ Node.prototype._onrequest = function (snapshot) {
   if (this.isServer) {
     response.transport = 'server'
     response.serverUrl = this.serverUrl
+    if (this.opts.serverWebTransportUrl) {
+      response.serverWebTransportUrl = this.opts.serverWebTransportUrl
+    }
   }
   firebase.update(responseRef, response)
 
@@ -668,7 +672,7 @@ Node.prototype._reviewResponses = function () {
   for (var j in candidates) {
     var c = candidates[j]
     if (c.transport === 'server') {
-      this._serverInfo = { id: c.id, serverUrl: c.serverUrl }
+      this._serverInfo = { id: c.id, serverUrl: c.serverUrl, serverWebTransportUrl: c.serverWebTransportUrl || null }
       // Skip server candidates if server is at capacity (unless serverOnly mode)
       if (!this._serverAtCapacity || this.serverOnly) {
         serverCandidates.push(c)
@@ -765,7 +769,7 @@ Node.prototype._acceptResponse = function (response) {
   // thread transport metadata to _connectToPeer
   var transportOpts = null
   if (response.transport === 'server') {
-    transportOpts = { transport: 'server', serverUrl: response.serverUrl }
+    transportOpts = { transport: 'server', serverUrl: response.serverUrl, serverWebTransportUrl: response.serverWebTransportUrl || (this._serverInfo && this._serverInfo.serverWebTransportUrl) || null }
   }
 
   // attempt a connection
@@ -780,7 +784,14 @@ Node.prototype._createTransport = function (initiator, peerId, transportOpts) {
       this._pendingAdapters[peerId] = adapter
       return adapter
     } else if (!initiator && transportOpts.serverUrl) {
-      // Client-side: create a ServerTransport to connect to the relay server
+      // Client-side: prefer WebTransport when available
+      if (transportOpts.serverWebTransportUrl && typeof WebTransport !== 'undefined') {
+        return new WebTransportTransport({
+          url: transportOpts.serverWebTransportUrl,
+          nodeId: this.id,
+          initiator: true
+        })
+      }
       return new ServerTransport({
         url: transportOpts.serverUrl,
         nodeId: this.id,
@@ -1244,11 +1255,13 @@ Node.prototype._connectToServerDirect = function () {
   this.state = 'connecting'
   this.emit('statechange')
 
-  var transport = new ServerTransport({
-    url: serverUrl,
-    nodeId: this.id,
-    initiator: true
-  })
+  var wtUrl = this._serverInfo.serverWebTransportUrl
+  var transport
+  if (wtUrl && typeof WebTransport !== 'undefined') {
+    transport = new WebTransportTransport({ url: wtUrl, nodeId: this.id, initiator: true })
+  } else {
+    transport = new ServerTransport({ url: serverUrl, nodeId: this.id, initiator: true })
+  }
 
   transport.id = serverId
   transport.transportType = 'server'

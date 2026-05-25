@@ -82,6 +82,12 @@ var firebase = firebaseInit.init(firebaseConfig)
 var host = serverHost || getLanIp()
 var serverUrl = 'ws://' + host + ':' + port
 
+// WebTransport config (optional — requires TLS cert)
+var wtPort = process.env.WT_PORT ? parseInt(process.env.WT_PORT, 10) : (port + 1)
+var wtCert = process.env.WT_CERT || null
+var wtKey = process.env.WT_KEY || null
+var webTransportUrl = null
+
 // Create the Node — connects as a child of the root via WebRTC
 var fireflower = require('./')(firebase.db)
 var opts = {
@@ -118,6 +124,39 @@ wss.on('listening', function () {
   console.log('WebSocket server listening on port', port)
 })
 
+// Start WebTransport server if TLS cert is configured
+if (wtCert && wtKey) {
+  var createWtServer = require('./webtransport-server')
+  var fs = require('fs')
+  var wtServer = createWtServer({
+    port: wtPort,
+    cert: fs.readFileSync(wtCert, 'utf8'),
+    key: fs.readFileSync(wtKey, 'utf8'),
+    onSession: function (wtPeer) {
+      wtPeer.on('connect', function () {
+        console.log('WebTransport client connected:', wtPeer.id)
+        var adapter = node._pendingAdapters[wtPeer.id]
+        if (adapter) {
+          delete node._pendingAdapters[wtPeer.id]
+          console.log('Wired WebTransport peer to pending adapter:', wtPeer.id)
+        } else {
+          node.downstream[wtPeer.id] = wtPeer
+          node.emit('peerconnect', wtPeer)
+        }
+      })
+      wtPeer.on('close', function () {
+        console.log('WebTransport client disconnected:', wtPeer.id)
+        delete node.downstream[wtPeer.id]
+        node.emit('peerdisconnect', wtPeer)
+      })
+    }
+  })
+  if (wtServer) {
+    webTransportUrl = 'https://' + host + ':' + wtPort + '/fireflower'
+    console.log('WebTransport server listening on port', wtPort)
+  }
+}
+
 var nodeConnected = false
 
 function getConnectedCount () {
@@ -142,6 +181,12 @@ function updateServerCapacityState () {
 function publishServerPresence () {
   var serverUrlConfigRef = ref(firebase.db, firebasePath + '/configuration/serverUrl')
   set(serverUrlConfigRef, serverUrl)
+  // Publish WebTransport URL if server is running
+  if (webTransportUrl) {
+    var wtUrlRef = ref(firebase.db, firebasePath + '/configuration/serverWebTransportUrl')
+    set(wtUrlRef, webTransportUrl)
+    onDisconnect(wtUrlRef).remove()
+  }
   // Publish server node ID so clients can build complete _serverInfo for direct reconnect
   var serverIdConfigRef = ref(firebase.db, firebasePath + '/configuration/serverId')
   set(serverIdConfigRef, node.id)
