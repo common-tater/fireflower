@@ -686,10 +686,11 @@ Node.prototype._reviewResponses = function () {
   function healthSort (a, b) {
     var aHealth = a.health || 0
     var bHealth = b.health || 0
-    // Only use health if both have reported a score
     if (aHealth > 0 && bHealth > 0) {
       var healthDiff = bHealth - aHealth
       if (Math.abs(healthDiff) > 20) return healthDiff
+      // Within 20 points: use RTT as tiebreaker (lower = better)
+      if (a.rtt != null && b.rtt != null) return a.rtt - b.rtt
     }
     return a.level - b.level
   }
