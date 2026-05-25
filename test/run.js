@@ -2047,6 +2047,21 @@ async function main () {
     await h.clearFirebase()
     await h.wait(500)
     await page.goto(URL)
+    // Auto-login if credentials are set and login form is visible
+    if (process.env.TEST_EMAIL && process.env.TEST_PASS) {
+      await h.wait(1000)
+      var needsLogin = await page.evaluate(function () {
+        var overlay = document.getElementById('login-overlay')
+        return overlay && !overlay.classList.contains('hidden')
+      })
+      if (needsLogin) {
+        await page.type('#login-email', process.env.TEST_EMAIL)
+        await page.type('#login-pass', process.env.TEST_PASS)
+        await page.click('#login-action-btn')
+        h.log('  Auto-login submitted')
+        await h.wait(2000)
+      }
+    }
     await h.waitForRootReady(page, 20000)
     h.log('  Root ready')
 
