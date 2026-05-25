@@ -2049,17 +2049,15 @@ async function main () {
     await page.goto(URL)
     // Auto-login if credentials are set and login form is visible
     if (process.env.TEST_EMAIL && process.env.TEST_PASS) {
-      await h.wait(1000)
-      var needsLogin = await page.evaluate(function () {
-        var overlay = document.getElementById('login-overlay')
-        return overlay && !overlay.classList.contains('hidden')
-      })
-      if (needsLogin) {
+      try {
+        await page.waitForSelector('#login-form:not(.hidden)', { timeout: 5000 })
         await page.type('#login-email', process.env.TEST_EMAIL)
         await page.type('#login-pass', process.env.TEST_PASS)
-        await page.click('#login-action-btn')
+        await page.click('#login-btn')
         h.log('  Auto-login submitted')
-        await h.wait(2000)
+        await h.wait(3000)
+      } catch (e) {
+        // Login form didn't appear — may already be authenticated
       }
     }
     await h.waitForRootReady(page, 20000)
