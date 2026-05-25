@@ -807,6 +807,17 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
       peer.didConnect = true
       self._onnotificationsOpen(peer)
     }
+    peer.notifications.onmessage = function (evt) {
+      try {
+        var data = JSON.parse(evt.data)
+        if (data.type === 'heartbeat-ack') {
+          var rtt = Date.now() - data.t
+          if (rtt >= 0 && rtt < 30000) {
+            peer._rtt = peer._rtt ? 0.8 * peer._rtt + 0.2 * rtt : rtt
+          }
+        }
+      } catch (err) {}
+    }
     peer.requestId = requestId
     // Allow external packages to create custom channels before negotiation
     self.emit('peerCreated', peer)
@@ -821,7 +832,10 @@ Node.prototype._connectToPeer = function (initiator, peerId, requestId, response
           var data = JSON.parse(evt.data)
           if (data.type === 'heartbeat') {
             self._onheartbeat(peer)
-          } else {
+            try {
+              peer.notifications.send(JSON.stringify({ type: 'heartbeat-ack', t: data.t }))
+            } catch (err) {}
+          } else if (data.type !== 'heartbeat-ack') {
             self._onmaskUpdate(evt)
           }
         }
@@ -1159,7 +1173,10 @@ Node.prototype._promoteServerFallback = function () {
       var data = JSON.parse(evt.data)
       if (data.type === 'heartbeat') {
         self._onheartbeat(fallback)
-      } else {
+        try {
+          channel.send(JSON.stringify({ type: 'heartbeat-ack', t: data.t }))
+        } catch (err) {}
+      } else if (data.type !== 'heartbeat-ack') {
         self._onmaskUpdate(evt)
       }
     }
@@ -1304,7 +1321,10 @@ Node.prototype._connectToServerDirect = function () {
         var data = JSON.parse(evt.data)
         if (data.type === 'heartbeat') {
           self._onheartbeat(transport)
-        } else {
+          try {
+            channel.send(JSON.stringify({ type: 'heartbeat-ack', t: data.t }))
+          } catch (err) {}
+        } else if (data.type !== 'heartbeat-ack') {
           self._onmaskUpdate(evt)
         }
       }
