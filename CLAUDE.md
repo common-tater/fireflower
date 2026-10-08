@@ -209,7 +209,7 @@ When force-server is toggled OFF and the server is disabled, two things happen: 
 ## Dev Environment Setup
 
 ### Firebase project
-Both fireflower and fireflower-visualizer use the same Firebase Realtime Database: **fireflower-test-viz** (`fireflower-test-viz-default-rtdb`). Firebase config files are gitignored — copy from `firebase-config.example.js` and use the `fireflower-test-viz` project credentials. Auth via `firebase login` (CLI) — no `.env` file needed.
+Both fireflower and fireflower-visualizer use the same Firebase Realtime Database: **fireflower-test-viz** (`fireflower-test-viz-default-rtdb`). Firebase config files are gitignored — copy from `firebase-config.example.js` and use the `fireflower-test-viz` project credentials. Auth via `firebase login` (CLI) — no `.env` file needed. Database rules require `auth != null`; every client signs in anonymously first (`firebaseInit.ready()` in the example and relay, `Firebase.ready` in the visualizer), so Anonymous sign-in must stay enabled on the project.
 
 ### Stale Firebase data
 After crashes, resets, or switching machines, stale data in Firebase (old reports, stuck requests, ghost `serverUrl`) can prevent nodes from connecting. Clear it before manual testing:
