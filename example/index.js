@@ -5,7 +5,7 @@ var firebaseInit = require('./firebase-init')
 var firebaseConfig = require('./firebase-config')
 var firebase = firebaseInit.init(firebaseConfig)
 var { ref, child, get } = require('firebase/database')
-var { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } = require('firebase/auth')
+var { getAuth, signInWithEmailAndPassword, signInAnonymously, signOut, onAuthStateChanged } = require('firebase/auth')
 
 var auth = getAuth(firebase.app)
 
@@ -77,27 +77,15 @@ function showLogin(state = 'login', user = null, errorMsg = null) {
 
 onAuthStateChanged(auth, (user) => {
   if (user) {
-    showLogin('checking')
-    // Verify admin access by reading specific user node
-    // This assumes rules allow reading /admins/$uid ONLY if it evaluates to true
-    // Or we simply try to access the tree path which is protected.
-    // Let's check admins path explicitly as it is the source of truth.
-    get(child(ref(firebase.db, 'admins'), user.uid))
-      .then((snap) => {
-        if (snap.val() === true) {
-          document.getElementById('login-overlay').classList.add('hidden')
-          initApp()
-        } else {
-          showLogin('unauthorized', user)
-        }
-      })
-      .catch((err) => {
-        // Permission denied or other error
-        console.error('Permission check failed:', err)
-        showLogin('unauthorized', user)
-      })
+    document.getElementById('login-overlay').classList.add('hidden')
+    initApp()
   } else {
-    showLogin('login')
+    showLogin('checking')
+    // Rules require auth != null; sign in anonymously unless a human logs in
+    signInAnonymously(auth).catch((err) => {
+      console.error('Anonymous sign-in failed:', err)
+      showLogin('login', null, err.message)
+    })
   }
 })
 

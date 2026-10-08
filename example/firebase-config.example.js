@@ -4,12 +4,12 @@
 // 1. Go to https://console.firebase.google.com
 // 2. Create a new project (or use an existing one)
 // 3. Go to Build > Realtime Database > Create Database
-// 4. Choose a location and start in "test mode" for development
+// 4. Choose a location (rules come from database.rules.json)
 // 5. Go to Project Settings > General > Your apps > Add app (Web)
 // 6. Copy the config values below
 //
-// IMPORTANT: Test mode rules expire after 30 days.
-// For production, configure proper security rules.
+// IMPORTANT: Clients sign in anonymously, so Anonymous must be enabled under
+// Authentication > Sign-in method.
 
 module.exports = {
   apiKey: 'YOUR_API_KEY',
