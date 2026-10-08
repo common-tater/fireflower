@@ -4,9 +4,11 @@
 
 var firebase = require('firebase/app')
 var firebaseDb = require('firebase/database')
+var firebaseAuth = require('firebase/auth')
 
 var app = null
 var db = null
+var authReady = null
 
 /**
  * Initialize Firebase with config.
@@ -16,9 +18,22 @@ function init (config) {
   if (!app) {
     app = firebase.initializeApp(config)
     db = firebaseDb.getDatabase(app)
+    // Database rules require auth; every read/write must wait on ready()
+    authReady = firebaseAuth.signInAnonymously(firebaseAuth.getAuth(app))
     console.log('Firebase initialized for project:', config.projectId)
   }
   return { app: app, db: db }
+}
+
+/**
+ * Promise that resolves once anonymous sign-in has completed.
+ * Await this before any database read or write.
+ */
+function ready () {
+  if (!authReady) {
+    return Promise.reject(new Error('Firebase not initialized. Call init() first.'))
+  }
+  return authReady
 }
 
 /**
@@ -44,6 +59,7 @@ function getApp () {
 
 module.exports = {
   init: init,
+  ready: ready,
   getDb: getDb,
   getApp: getApp
 }

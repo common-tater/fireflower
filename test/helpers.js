@@ -260,6 +260,7 @@ async function resetAll (page) {
 
 async function clearFirebase (path) {
   var db = getDb()
+  await firebaseInit.ready()
   var p = path || TEST_PATH
   await Promise.all([
     remove(ref(db, p + '/reports')),
@@ -273,6 +274,7 @@ async function clearFirebase (path) {
 
 async function clearFirebaseRequests () {
   var db = getDb()
+  await firebaseInit.ready()
   await remove(ref(db, TEST_PATH + '/requests'))
 }
 

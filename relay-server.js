@@ -236,47 +236,53 @@ wss.on('error', function (err) {
   console.error('WebSocket server error:', err)
 })
 
-// Watch serverEnabled config toggle from visualizer
-var { ref, onValue, set, remove, onDisconnect } = require('firebase/database')
-var configRef = ref(firebase.db, firebasePath + '/configuration/serverEnabled')
-var serverActive = false
+// Database rules require auth: attach listeners (and connect) only after anonymous sign-in
+firebaseInit.ready().then(function () {
+  // Watch serverEnabled config toggle from visualizer
+  var { ref, onValue, set, remove, onDisconnect } = require('firebase/database')
+  var configRef = ref(firebase.db, firebasePath + '/configuration/serverEnabled')
+  var serverActive = false
 
-onValue(configRef, function (snapshot) {
-  var enabled = snapshot.val()
-  if (enabled === null) enabled = true // default to enabled
+  onValue(configRef, function (snapshot) {
+    var enabled = snapshot.val()
+    if (enabled === null) enabled = true // default to enabled
 
-  if (enabled && !serverActive) {
-    console.log('Server ENABLED via config — connecting to tree')
-    serverActive = true
-    node.connect()
-  } else if (!enabled && serverActive) {
-    console.log('Server DISABLED via config — disconnecting from tree')
-    serverActive = false
-    node.disconnect()
-  }
-})
+    if (enabled && !serverActive) {
+      console.log('Server ENABLED via config — connecting to tree')
+      serverActive = true
+      node.connect()
+    } else if (!enabled && serverActive) {
+      console.log('Server DISABLED via config — disconnecting from tree')
+      serverActive = false
+      node.disconnect()
+    }
+  })
 
-// Watch serverCapacity from Firebase config (takes precedence over command line/env)
-var serverCapacityConfigRef = ref(firebase.db, firebasePath + '/configuration/serverCapacity')
-onValue(serverCapacityConfigRef, function (snapshot) {
-  var capacity = snapshot.val()
-  if (capacity != null) {
-    node.opts.serverCapacity = capacity
-    console.log('Server capacity updated from config:', capacity)
-    updateServerCapacityState()
-  } else if (serverCapacity) {
-    // Fall back to command line/env var if Firebase config is null
-    node.opts.serverCapacity = serverCapacity
-  }
-})
+  // Watch serverCapacity from Firebase config (takes precedence over command line/env)
+  var serverCapacityConfigRef = ref(firebase.db, firebasePath + '/configuration/serverCapacity')
+  onValue(serverCapacityConfigRef, function (snapshot) {
+    var capacity = snapshot.val()
+    if (capacity != null) {
+      node.opts.serverCapacity = capacity
+      console.log('Server capacity updated from config:', capacity)
+      updateServerCapacityState()
+    } else if (serverCapacity) {
+      // Fall back to command line/env var if Firebase config is null
+      node.opts.serverCapacity = serverCapacity
+    }
+  })
 
-// When Firebase reconnects after a brief drop, onDisconnect has already fired
-// and removed serverUrl. Re-publish if the tree node is still active.
-var connectedRef = ref(firebase.db, '.info/connected')
-onValue(connectedRef, function (snapshot) {
-  if (snapshot.val() === true && nodeConnected) {
-    publishServerPresence()
-  }
+  // When Firebase reconnects after a brief drop, onDisconnect has already fired
+  // and removed serverUrl. Re-publish if the tree node is still active.
+  var connectedRef = ref(firebase.db, '.info/connected')
+  onValue(connectedRef, function (snapshot) {
+    if (snapshot.val() === true && nodeConnected) {
+      publishServerPresence()
+    }
+  })
+}).catch(function (err) {
+  console.error('Firebase anonymous sign-in failed:', err)
+  process.exit(1)
 })
 
 // Clean up on exit
