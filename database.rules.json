@@ -1,6 +1,28 @@
 {
   "rules": {
-    ".read": "auth != null",
-    ".write": "auth != null"
+    ".read": false,
+    ".write": false,
+    "admins": {
+      ".read": false,
+      ".write": false
+    },
+    "$tree": {
+      "reports": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      },
+      "requests": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      },
+      "configuration": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      },
+      "realnow": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    }
   }
 }
